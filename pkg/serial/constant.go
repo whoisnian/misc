@@ -7,6 +7,11 @@ import (
 )
 
 var baudrateMap = map[int]uint32{
+	300:    unix.B300,
+	600:    unix.B600,
+	1200:   unix.B1200,
+	2400:   unix.B2400,
+	4800:   unix.B4800,
 	9600:   unix.B9600,
 	19200:  unix.B19200,
 	38400:  unix.B38400,
