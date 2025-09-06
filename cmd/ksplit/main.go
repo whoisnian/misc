@@ -19,23 +19,34 @@ import (
 )
 
 var CFG struct {
+	Debug  bool   `flag:"d,false,Enable debug output"`
 	Input  string `flag:"i,-,Kustomize build result as input, from file or stdin"`
 	Output string `flag:"o,./output,Directory to save the split files in"`
 	SubDir bool   `flag:"sub,false,Whether to create sub-directory for each kind"`
 }
 
-var LOG = logger.New(logger.NewNanoHandler(os.Stderr, logger.Options{
-	Level:     logger.LevelDebug,
-	Colorful:  ansi.IsSupported(os.Stderr.Fd()),
-	AddSource: false,
-}))
+var LOG *logger.Logger
 
-func main() {
-	ctx := context.Background()
+func setupConfigAndLogger(_ context.Context) {
 	_, err := config.FromCommandLine(&CFG)
 	if err != nil {
 		panic(err)
 	}
+	level := logger.LevelInfo
+	if CFG.Debug {
+		level = logger.LevelDebug
+	}
+	LOG = logger.New(logger.NewNanoHandler(os.Stderr, logger.Options{
+		Level:     level,
+		Colorful:  ansi.IsSupported(os.Stderr.Fd()),
+		AddSource: CFG.Debug,
+	}))
+}
+
+func main() {
+	ctx := context.Background()
+	setupConfigAndLogger(ctx)
+	LOG.Debugf(ctx, "use config: %+v", CFG)
 
 	var dec kio.ByteReader
 	if CFG.Input == "-" {

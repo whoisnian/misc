@@ -2,14 +2,40 @@ package main
 
 import (
 	"context"
+	"os"
 
+	"github.com/whoisnian/glb/ansi"
+	"github.com/whoisnian/glb/config"
+	"github.com/whoisnian/glb/logger"
 	"github.com/whoisnian/misc/pkg/serial"
 )
 
+var CFG struct {
+	Debug  bool   `flag:"d,false,Enable debug output"`
+	Device string `flag:"dev,/dev/ttyUSB0,Serial device to use"`
+}
+
+var LOG *logger.Logger
+
+func setupConfigAndLogger(_ context.Context) {
+	_, err := config.FromCommandLine(&CFG)
+	if err != nil {
+		panic(err)
+	}
+	level := logger.LevelInfo
+	if CFG.Debug {
+		level = logger.LevelDebug
+	}
+	LOG = logger.New(logger.NewNanoHandler(os.Stderr, logger.Options{
+		Level:     level,
+		Colorful:  ansi.IsSupported(os.Stderr.Fd()),
+		AddSource: CFG.Debug,
+	}))
+}
+
 func main() {
 	ctx := context.Background()
-	setupConfig(ctx)
-	setupLogger(ctx)
+	setupConfigAndLogger(ctx)
 	LOG.Debugf(ctx, "use config: %+v", CFG)
 
 	ttyPort, err := serial.Open(CFG.Device, 115200, 8, serial.ParityNone, serial.StopBits1)
