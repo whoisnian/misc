@@ -65,6 +65,18 @@ func Open(device string, baudrate int, databits int, parity uint32, stopbits uin
 	}, nil
 }
 
+func (p *Port) Flush() error {
+	if _, _, err := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(p.Fd()),
+		uintptr(unix.TCFLSH),
+		uintptr(unix.TCIOFLUSH),
+	); err != 0 {
+		return err
+	}
+	return nil
+}
+
 func (p *Port) SetInterval(interval time.Duration) {
 	p.interval = interval
 }
