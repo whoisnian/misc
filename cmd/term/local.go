@@ -39,6 +39,11 @@ func runLocal(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("term.GetSize error: %w", err)
 	}
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("term.MakeRaw error: %w", err)
+	}
+	defer term.Restore(fd, oldState)
 
 	// bind shell to pty
 	cmd := exec.CommandContext(ctx, shellPath)
@@ -61,13 +66,6 @@ func runLocal(ctx context.Context) error {
 			}
 		}
 	}()
-
-	// set terminal raw mode
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return fmt.Errorf("term.MakeRaw error: %w", err)
-	}
-	defer term.Restore(fd, oldState)
 
 	// pipe input and output
 	go io.Copy(ptmx, os.Stdin)

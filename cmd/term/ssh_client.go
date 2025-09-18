@@ -46,6 +46,11 @@ func runSSHClient(ctx context.Context, options string) error {
 	if err != nil {
 		return fmt.Errorf("term.GetSize error: %w", err)
 	}
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("term.MakeRaw error: %w", err)
+	}
+	defer term.Restore(fd, oldState)
 
 	// connect to ssh server
 	config := &ssh.ClientConfig{
@@ -72,13 +77,6 @@ func runSSHClient(ctx context.Context, options string) error {
 			}
 		}
 	}()
-
-	// set terminal raw mode
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return fmt.Errorf("term.MakeRaw error: %w", err)
-	}
-	defer term.Restore(fd, oldState)
 
 	// bind session stdin/stdout/stderr
 	session, err := client.NewSession()

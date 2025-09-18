@@ -144,7 +144,8 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 	requestID := 0
 	for req := range requests {
 		requestID++
-		if req.Type == "pty-req" {
+		switch req.Type {
+		case "pty-req":
 			var ptyreq ptyRequestMsg
 			if err := ssh.Unmarshal(req.Payload, &ptyreq); err != nil {
 				LOG.Errorf(ctx, "%d.%d.%d ssh.Unmarshal pty-req error: %v", connID, channelID, requestID, err)
@@ -171,7 +172,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			}()
 			pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(ptyreq.Rows), Cols: uint16(ptyreq.Columns)})
 			req.Reply(true, nil)
-		} else if req.Type == "shell" {
+		case "shell":
 			LOG.Debugf(ctx, "%d.%d.%d request shell: %q", connID, channelID, requestID, shellPath)
 			if ptmx == nil {
 				LOG.Errorf(ctx, "%d.%d.%d no pty allocated", connID, channelID, requestID)
@@ -192,6 +193,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			go func() {
 				LOG.Debugf(ctx, "%d.%d.%d io.Copy input start", connID, channelID, requestID)
 				io.Copy(ptmx, channel)
+				cmd.Process.Kill()
 				LOG.Debugf(ctx, "%d.%d.%d io.Copy input end", connID, channelID, requestID)
 			}()
 			go func() {
@@ -206,7 +208,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 				LOG.Debugf(ctx, "%d.%d.%d cmd.Wait end", connID, channelID, requestID)
 			}()
 			req.Reply(true, nil)
-		} else if req.Type == "window-change" {
+		case "window-change":
 			var winch ptyWindowChangeMsg
 			if err := ssh.Unmarshal(req.Payload, &winch); err != nil {
 				LOG.Errorf(ctx, "%d.%d.%d ssh.Unmarshal window-change error: %v", connID, channelID, requestID, err)
@@ -216,7 +218,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			if ptmx != nil {
 				pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(winch.Rows), Cols: uint16(winch.Columns)})
 			}
-		} else {
+		default:
 			LOG.Warnf(ctx, "%d.%d.%d unknown request type: %q", connID, channelID, requestID, req.Type)
 			req.Reply(false, nil)
 		}

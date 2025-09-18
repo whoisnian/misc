@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
+	"sync"
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
@@ -42,7 +42,7 @@ func runHTTPServer(ctx context.Context, options string) error {
 	mux.HandleMiddleware(LOG.NewMiddleware())
 	mux.Handle("/web", http.MethodGet, webHandler)
 	mux.Handle("/static/*", http.MethodGet, staticHandler)
-	mux.Handle("/ws", http.MethodGet, createWebSocketHandler(shellPath, workingDir))
+	mux.Handle("/ws", http.MethodGet, webSocketHandlerWith(shellPath, workingDir))
 
 	LOG.Infof(ctx, "http server listening on %s", options)
 	server := &http.Server{Addr: options, Handler: mux}
@@ -103,9 +103,9 @@ func staticHandler(store *httpd.Store) {
 	serveWebFile(store, filepath.Join("web/static", store.RouteParamAny()))
 }
 
-func createWebSocketHandler(shellPath string, workingDir string) func(store *httpd.Store) {
+func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd.Store) {
 	return func(store *httpd.Store) {
-		conn, err := websocket.Accept(store.W.Origin, store.R, nil)
+		conn, err := websocket.Accept(store.W, store.R, nil)
 		if err != nil {
 			LOG.Error(store.R.Context(), "websocket.Accept failed", logger.Error(err))
 			store.W.WriteHeader(http.StatusInternalServerError)
@@ -132,44 +132,61 @@ func createWebSocketHandler(shellPath string, workingDir string) func(store *htt
 		}
 		defer ptmx.Close()
 
-		go func() {
+		wg := new(sync.WaitGroup)
+		wg.Go(func() {
+			defer cmd.Process.Kill()
 			for {
 				_, data, err := conn.Read(context.Background())
 				if err != nil {
 					LOG.Error(store.R.Context(), "websocket.Read failed", logger.Error(err))
+					conn.Close(websocket.StatusInternalError, "internal error")
 					return
 				}
 				if _, err := ptmx.Write(data); err != nil {
 					LOG.Error(store.R.Context(), "ptmx.Write failed", logger.Error(err))
+					conn.Close(websocket.StatusInternalError, "internal error")
 					return
 				}
 			}
-		}()
+		})
 
-		for {
-			buf := make([]byte, 4096)
-			n, err := ptmx.Read(buf)
-			if err != nil {
-				if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) {
-					break
-				}
-				LOG.Error(store.R.Context(), "ptmx.Read failed", logger.Error(err))
-				conn.Close(websocket.StatusInternalError, "internal error")
-				break
-			}
-			if n > 0 {
-				err = conn.Write(context.Background(), websocket.MessageText, buf[:n])
+		wg.Go(func() {
+			for {
+				buf := make([]byte, 4096)
+				n, err := ptmx.Read(buf)
 				if err != nil {
-					LOG.Error(store.R.Context(), "websocket.Write failed", logger.Error(err))
-					break
+					LOG.Error(store.R.Context(), "ptmx.Read failed", logger.Error(err))
+					conn.Close(websocket.StatusInternalError, "internal error")
+					return
+				}
+				if n > 0 {
+					err = conn.Write(context.Background(), websocket.MessageBinary, buf[:n])
+					if err != nil {
+						LOG.Error(store.R.Context(), "websocket.Write failed", logger.Error(err))
+						conn.Close(websocket.StatusInternalError, "internal error")
+						return
+					}
 				}
 			}
-		}
+		})
 
-		if process := cmd.Process; process != nil {
-			process.Signal(syscall.SIGTERM)
-		}
 		cmd.Wait()
-		conn.Close(websocket.StatusNormalClosure, "")
+		wg.Wait()
 	}
 }
+
+// shell exit
+// 2025-09-18 20:08:12 [E] ptmx.Read failed read /dev/ptmx: input/output error
+// 2025-09-18 20:08:12 [E] websocket.Read failed failed to get reader: received close frame: status = StatusInternalError and reason = "internal error"
+
+// client close tab
+// 2025-09-18 20:08:45 [E] websocket.Read failed failed to get reader: received close frame: status = StatusGoingAway and reason = ""
+// 2025-09-18 20:08:45 [E] ptmx.Read failed read /dev/ptmx: input/output error
+
+// client refresh tab
+// 2025-09-18 20:09:31 [E] websocket.Read failed failed to get reader: received close frame: status = StatusGoingAway and reason = ""
+// 2025-09-18 20:09:31 [E] ptmx.Read failed read /dev/ptmx: input/output error
+
+// client call ws.close()
+// 2025-09-18 20:11:01 [E] websocket.Read failed failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = ""
+// 2025-09-18 20:11:01 [E] ptmx.Read failed read /dev/ptmx: input/output error
