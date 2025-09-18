@@ -50,8 +50,8 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
-github.com/whoisnian/glb v1.5.6 h1:nBSF7PJDrqzlOtS6RTL9X4AOFn9x9ynKPjXljuz2/RI=
-github.com/whoisnian/glb v1.5.6/go.mod h1:WrbyZZYyM5ba6Xy4xMFSONWfonq49cntXFtgjDx/pZQ=
+github.com/whoisnian/glb v1.5.7 h1:Oy7A5v2p3XGtySJ7ZR2auU3AI2H2SQ4Sl8A6p40zhmc=
+github.com/whoisnian/glb v1.5.7/go.mod h1:56Zhy1cd5X76KFrzu+NGllpz5iZ6TIvNeXFYMYJgLwc=
 github.com/xlab/treeprint v1.2.0 h1:HzHnuAF1plUN2zGlAFHbSQP2qJ0ZAD3XF5XD7OesXRQ=
 github.com/xlab/treeprint v1.2.0/go.mod h1:gj5Gd3gPdKtR1ikdDK6fnFLdmIS0X30kTTuNd/WEJu0=
 go.yaml.in/yaml/v2 v2.4.2 h1:DzmwEr2rDGHl7lsFgAHxmNz/1NlQ7xLIrlN2h5d1eGI=

@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
-	github.com/whoisnian/glb v1.5.6
+	github.com/whoisnian/glb v1.5.7
 	golang.org/x/crypto v0.42.0
 	golang.org/x/sys v0.36.0
 	golang.org/x/term v0.35.0
