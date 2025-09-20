@@ -1,0 +1,3 @@
+# Ignore js dep
+/node_modules
+/.npmrc

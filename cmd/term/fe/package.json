@@ -1,0 +1,29 @@
+{
+  "name": "term-fe",
+  "version": "0.0.1",
+  "description": "frontend of term",
+  "author": "whoisnian",
+  "license": "MIT",
+  "scripts": {
+    "build": "rm -rf ./dist && NODE_ENV=production node ./scripts/build.js",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "test": "NODE_ENV=test node --test"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "dependencies": {
+    "@xterm/addon-attach": "0.11.0",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-unicode11": "0.8.0",
+    "@xterm/xterm": "5.5.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "eslint": "9.36.0",
+    "globals": "16.4.0",
+    "neostandard": "0.12.2"
+  }
+}
