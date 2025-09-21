@@ -4,6 +4,11 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
 
+__DEBUG__ && new EventSource('/esbuild').addEventListener('change', () => window.location.reload())
+
+const getPackageVersion = () => __PACKAGE_VERSION__
+console.log(getPackageVersion())
+
 const terminal = new Terminal({
   allowProposedApi: true,
   fontFamily: 'ui-monospace, Menlo, Consolas, Hack, Liberation Mono, Microsoft Yahei, Noto Sans Mono CJK SC, sans-serif',
