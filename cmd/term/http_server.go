@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -19,10 +19,8 @@ import (
 	"github.com/whoisnian/glb/httpd"
 	"github.com/whoisnian/glb/logger"
 	"github.com/whoisnian/glb/util/fsutil"
+	fe "github.com/whoisnian/misc/cmd/term/fe/dist"
 )
-
-//go:embed web/*
-var webFS embed.FS
 
 func runHTTPServer(ctx context.Context, options string) error {
 	shell := CFG.Shell
@@ -55,7 +53,7 @@ func runHTTPServer(ctx context.Context, options string) error {
 }
 
 func serveWebFile(store *httpd.Store, path string) {
-	file, err := webFS.Open(path)
+	file, err := fe.FS.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			store.W.WriteHeader(http.StatusNotFound)
@@ -76,13 +74,12 @@ func serveWebFile(store *httpd.Store, path string) {
 	ctype := mime.TypeByExtension(filepath.Ext(path))
 	if ctype == "" {
 		ctype = "application/octet-stream"
+	} else if strings.Contains(ctype, "text/css") || strings.Contains(ctype, "application/javascript") {
+		// nginx expires max
+		// https://nginx.org/en/docs/http/ngx_http_headers_module.html#expires
+		store.W.Header().Set("cache-control", "max-age:315360000, public")
+		store.W.Header().Set("expires", "Thu, 31 Dec 2037 23:55:55 GMT")
 	}
-	// } else if strings.Contains(ctype, "text/css") || strings.Contains(ctype, "application/javascript") {
-	// 	// nginx expires max
-	// 	// https://nginx.org/en/docs/http/ngx_http_headers_module.html#expires
-	// 	store.W.Header().Set("cache-control", "max-age:315360000, public")
-	// 	store.W.Header().Set("expires", "Thu, 31 Dec 2037 23:55:55 GMT")
-	// }
 	store.W.Header().Set("content-type", ctype)
 
 	if store.W.Header().Get("content-encoding") == "" {
