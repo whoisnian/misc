@@ -38,8 +38,10 @@ func runHTTPServer(ctx context.Context, options string) error {
 
 	mux := httpd.NewMux()
 	mux.HandleMiddleware(LOG.NewMiddleware())
-	mux.Handle("/web", http.MethodGet, webHandler)
-	mux.Handle("/static/*", http.MethodGet, staticHandler)
+	mux.Handle("/static/*", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, filepath.Join("static", s.RouteParamAny())) })
+	mux.Handle("/favicon.ico", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "favicon.ico") })
+	mux.Handle("/robots.txt", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "robots.txt") })
+	mux.Handle("/web", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "static/index.html") })
 	mux.Handle("/ws", http.MethodGet, webSocketHandlerWith(shellPath, workingDir))
 
 	LOG.Infof(ctx, "http server listening on %s", options)
@@ -52,14 +54,14 @@ func runHTTPServer(ctx context.Context, options string) error {
 	return nil
 }
 
-func serveWebFile(store *httpd.Store, path string) {
+func serveFileFromFE(store *httpd.Store, path string) {
 	file, err := fe.FS.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			store.W.WriteHeader(http.StatusNotFound)
 			return
 		}
-		LOG.Error(store.R.Context(), "serveWebFile failed", logger.Error(err))
+		LOG.Error(store.R.Context(), "serveFileFromFE failed", logger.Error(err))
 		store.W.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -90,14 +92,6 @@ func serveWebFile(store *httpd.Store, path string) {
 		store.W.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-}
-
-func webHandler(store *httpd.Store) {
-	serveWebFile(store, "static/index.html")
-}
-
-func staticHandler(store *httpd.Store) {
-	serveWebFile(store, filepath.Join("static", store.RouteParamAny()))
 }
 
 const MSG_TYPE_DATA = '0'
