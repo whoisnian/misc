@@ -21,7 +21,7 @@ const generateHtmlFromTemplate = ({ stylesheetList, scriptList }) => {
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="terminal"></div>
+    <div id="terminal" style="position:fixed;border:none;top:0;bottom:0;left:0;right:0;width:100%;height:100%;"></div>
     ${scriptLink}
   </body>
 </html>`
