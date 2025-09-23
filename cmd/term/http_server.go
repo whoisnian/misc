@@ -93,12 +93,15 @@ func serveWebFile(store *httpd.Store, path string) {
 }
 
 func webHandler(store *httpd.Store) {
-	serveWebFile(store, "web/index.html")
+	serveWebFile(store, "static/index.html")
 }
 
 func staticHandler(store *httpd.Store) {
-	serveWebFile(store, filepath.Join("web/static", store.RouteParamAny()))
+	serveWebFile(store, filepath.Join("static", store.RouteParamAny()))
 }
+
+const MSG_TYPE_DATA = '0'
+const MSG_TYPE_RESIZE = '1'
 
 func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd.Store) {
 	return func(store *httpd.Store) {
@@ -138,26 +141,42 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 					LOG.Error(store.R.Context(), "websocket.Read failed", logger.Error(err))
 					conn.Close(websocket.StatusInternalError, "internal error")
 					return
+				} else if len(data) == 0 {
+					continue
 				}
-				if _, err := ptmx.Write(data); err != nil {
-					LOG.Error(store.R.Context(), "ptmx.Write failed", logger.Error(err))
-					conn.Close(websocket.StatusInternalError, "internal error")
+				switch data[0] {
+				case MSG_TYPE_RESIZE:
+					cols := uint16(data[1]) | uint16(data[2])<<8
+					rows := uint16(data[3]) | uint16(data[4])<<8
+					if err := pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+						LOG.Error(store.R.Context(), "pty.Setsize failed", logger.Error(err))
+					}
+				case MSG_TYPE_DATA:
+					if _, err := ptmx.Write(data[1:]); err != nil {
+						LOG.Error(store.R.Context(), "ptmx.Write failed", logger.Error(err))
+						conn.Close(websocket.StatusInternalError, "internal error")
+						return
+					}
+				default:
+					LOG.Errorf(store.R.Context(), "unknown message type %d(%s)", data[0], string(data[0]))
+					conn.Close(websocket.StatusUnsupportedData, "unsupported message")
 					return
 				}
 			}
 		})
 
 		wg.Go(func() {
+			buf := make([]byte, 4096)
+			buf[0] = MSG_TYPE_DATA
 			for {
-				buf := make([]byte, 4096)
-				n, err := ptmx.Read(buf)
+				n, err := ptmx.Read(buf[1:])
 				if err != nil {
 					LOG.Error(store.R.Context(), "ptmx.Read failed", logger.Error(err))
 					conn.Close(websocket.StatusInternalError, "internal error")
 					return
 				}
 				if n > 0 {
-					err = conn.Write(context.Background(), websocket.MessageBinary, buf[:n])
+					err = conn.Write(context.Background(), websocket.MessageBinary, buf[:n+1])
 					if err != nil {
 						LOG.Error(store.R.Context(), "websocket.Write failed", logger.Error(err))
 						conn.Close(websocket.StatusInternalError, "internal error")
