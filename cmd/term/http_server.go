@@ -154,7 +154,7 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 		wg.Go(func() {
 			defer cmd.Process.Kill()
 			for {
-				_, data, err := conn.Read(context.Background())
+				_, data, err := conn.Read(store.R.Context())
 				if err != nil {
 					LOG.Error(store.R.Context(), "websocket.Read failed", logger.Error(err))
 					conn.Close(websocket.StatusInternalError, "internal error")
@@ -194,7 +194,7 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 					return
 				}
 				if n > 0 {
-					err = conn.Write(context.Background(), websocket.MessageBinary, buf[:n+1])
+					err = conn.Write(store.R.Context(), websocket.MessageBinary, buf[:n+1])
 					if err != nil {
 						LOG.Error(store.R.Context(), "websocket.Write failed", logger.Error(err))
 						conn.Close(websocket.StatusInternalError, "internal error")
