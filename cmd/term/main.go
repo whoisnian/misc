@@ -17,8 +17,8 @@ var CFG struct {
 	Local      bool   `flag:"local,,Run as local terminal"`
 	SSHServer  string `flag:"sshd,,Run as ssh server (e.g. user:pass@127.0.0.1:2222)"`
 	SSHClient  string `flag:"ssh,,Run as ssh client (e.g. user:pass@127.0.0.1:2222)"`
-	HTTPServer string `flag:"httpd,,Run as http server (e.g. 127.0.0.1:8080)"`
-	HTTPClient string `flag:"http,,Run as http client (e.g. 127.0.0.1:8080)"`
+	HTTPServer string `flag:"httpd,,Run as http server (e.g. user:pass@127.0.0.1:8080)"`
+	HTTPClient string `flag:"http,,Run as http client (e.g. user:pass@127.0.0.1:8080)"`
 }
 
 var LOG *logger.Logger

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +25,13 @@ import (
 )
 
 func runHTTPServer(ctx context.Context, options string) error {
+	// parse options
+	parsed, err := url.Parse("http://" + options)
+	if err != nil {
+		return fmt.Errorf("url.Parse error: %w", err)
+	}
+	auth := parsed.User.String()
+	addr := parsed.Host
 	shell := CFG.Shell
 	if shell == "" {
 		shell = "sh"
@@ -41,17 +50,32 @@ func runHTTPServer(ctx context.Context, options string) error {
 	mux.Handle("/static/*", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, filepath.Join("static", s.RouteParamAny())) })
 	mux.Handle("/favicon.ico", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "favicon.ico") })
 	mux.Handle("/robots.txt", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "robots.txt") })
-	mux.Handle("/web", http.MethodGet, func(s *httpd.Store) { serveFileFromFE(s, "static/index.html") })
-	mux.Handle("/ws", http.MethodGet, webSocketHandlerWith(shellPath, workingDir))
+	mux.Handle("/web", http.MethodGet, authRequire(func(s *httpd.Store) { serveFileFromFE(s, "static/index.html") }, auth))
+	mux.Handle("/ws", http.MethodGet, authRequire(webSocketHandlerWith(shellPath, workingDir), auth))
 
-	LOG.Infof(ctx, "http server listening on %s", options)
-	server := &http.Server{Addr: options, Handler: mux}
+	LOG.Infof(ctx, "http server listening on %s", addr)
+	server := &http.Server{Addr: addr, Handler: mux}
 	if err := server.ListenAndServe(); errors.Is(err, http.ErrServerClosed) {
 		LOG.Warn(ctx, "server is shutting down")
 	} else if err != nil {
 		return err
 	}
 	return nil
+}
+
+func authRequire(handler httpd.HandlerFunc, userinfo string) httpd.HandlerFunc {
+	if userinfo == "" {
+		return handler
+	}
+	b64str := base64.StdEncoding.EncodeToString([]byte(userinfo))
+	return func(store *httpd.Store) {
+		if store.R.Header.Get("Authorization") != "Basic "+b64str {
+			store.W.Header().Add("WWW-Authenticate", `Basic realm="terminal server"`)
+			store.W.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler(store)
+	}
 }
 
 func serveFileFromFE(store *httpd.Store, path string) {
