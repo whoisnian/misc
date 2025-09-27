@@ -84,17 +84,17 @@ func runSSHServer(ctx context.Context, options string) error {
 	connID := 0
 	for {
 		connID++
-		conn, err := listener.Accept()
+		tcpconn, err := listener.Accept()
 		if err != nil {
 			return fmt.Errorf("failed to accept incoming connection: %w", err)
 		}
 		go func() {
-			defer conn.Close()
-			_, chans, reqs, err := ssh.NewServerConn(conn, config)
+			srvconn, chans, reqs, err := ssh.NewServerConn(tcpconn, config)
 			if err != nil {
 				LOG.Errorf(ctx, "%d.0.0 ssh.NewServerConn error: %v", connID, err)
 				return
 			}
+			defer srvconn.Close()
 			go func() {
 				LOG.Debugf(ctx, "%d.0.0 ssh.DiscardRequests start", connID)
 				ssh.DiscardRequests(reqs)
@@ -123,6 +123,10 @@ type ptyWindowChangeMsg struct {
 	Rows    uint32
 	Width   uint32
 	Height  uint32
+}
+
+type exitStatusMsg struct {
+	ExitStatus uint32
 }
 
 func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath string, workingDir string, connID int, channelID int) {
@@ -193,7 +197,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			go func() {
 				LOG.Debugf(ctx, "%d.%d.%d io.Copy input start", connID, channelID, requestID)
 				io.Copy(ptmx, channel)
-				cmd.Process.Kill()
+				cmd.Process.Signal(syscall.SIGHUP)
 				LOG.Debugf(ctx, "%d.%d.%d io.Copy input end", connID, channelID, requestID)
 			}()
 			go func() {
@@ -204,6 +208,7 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			go func() {
 				LOG.Debugf(ctx, "%d.%d.%d cmd.Wait start", connID, channelID, requestID)
 				cmd.Wait()
+				channel.SendRequest("exit-status", false, ssh.Marshal(exitStatusMsg{0}))
 				channel.Close()
 				LOG.Debugf(ctx, "%d.%d.%d cmd.Wait end", connID, channelID, requestID)
 			}()

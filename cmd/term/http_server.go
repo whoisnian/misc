@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
@@ -152,7 +153,7 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 
 		wg := new(sync.WaitGroup)
 		wg.Go(func() {
-			defer cmd.Process.Kill()
+			defer cmd.Process.Signal(syscall.SIGHUP)
 			for {
 				_, data, err := conn.Read(store.R.Context())
 				if err != nil {
