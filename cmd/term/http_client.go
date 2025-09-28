@@ -11,7 +11,6 @@ import (
 	"syscall"
 
 	"github.com/coder/websocket"
-	"github.com/whoisnian/glb/logger"
 	"golang.org/x/term"
 )
 
@@ -74,8 +73,8 @@ func runHTTPClient(ctx context.Context, options string) error {
 			data[4] = byte(h >> 8)
 			err = conn.Write(ctx, websocket.MessageBinary, data)
 			if err != nil {
-				LOG.Error(ctx, "websocket.Write failed", logger.Error(err))
-				conn.Close(websocket.StatusInternalError, "internal error")
+				LOG.Errorf(ctx, "websocket.Write error: %v", err)
+				conn.Close(websocket.StatusAbnormalClosure, "websocket write error")
 				return
 			}
 		}
@@ -87,15 +86,15 @@ func runHTTPClient(ctx context.Context, options string) error {
 		for {
 			n, err := os.Stdin.Read(buf[1:])
 			if err != nil {
-				LOG.Error(ctx, "stdin.Read failed", logger.Error(err))
-				conn.Close(websocket.StatusInternalError, "internal error")
+				LOG.Errorf(ctx, "stdin.Read error: %v", err)
+				conn.Close(websocket.StatusAbnormalClosure, "stdin read error")
 				return
 			}
 			if n > 0 {
 				err = conn.Write(ctx, websocket.MessageBinary, buf[:n+1])
 				if err != nil {
-					LOG.Error(ctx, "websocket.Write failed", logger.Error(err))
-					conn.Close(websocket.StatusInternalError, "internal error")
+					LOG.Errorf(ctx, "websocket.Write error: %v", err)
+					conn.Close(websocket.StatusAbnormalClosure, "websocket write error")
 					return
 				}
 			}
@@ -105,7 +104,7 @@ func runHTTPClient(ctx context.Context, options string) error {
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			conn.Close(websocket.StatusInternalError, "internal error")
+			conn.Close(websocket.StatusAbnormalClosure, "websocket read error")
 			return err
 		} else if len(data) == 0 {
 			continue
@@ -117,7 +116,7 @@ func runHTTPClient(ctx context.Context, options string) error {
 			return fmt.Errorf("server resize terminal to %dx%d", cols, rows)
 		case MSG_TYPE_DATA:
 			if _, err := os.Stdout.Write(data[1:]); err != nil {
-				conn.Close(websocket.StatusInternalError, "internal error")
+				conn.Close(websocket.StatusAbnormalClosure, "stdout write error")
 				return err
 			}
 		default:

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -156,9 +157,17 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 			defer cmd.Process.Signal(syscall.SIGHUP)
 			for {
 				_, data, err := conn.Read(store.R.Context())
-				if err != nil {
+				if err != nil && websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+					// server or client normally closed the connection
+					return
+				} else if err != nil && websocket.CloseStatus(err) == websocket.StatusInternalError {
+					// server already closed the connection
+					return
+				} else if err != nil && websocket.CloseStatus(err) == websocket.StatusGoingAway {
+					LOG.Warn(store.R.Context(), "websocket client is going away")
+					return
+				} else if err != nil {
 					LOG.Error(store.R.Context(), "websocket.Read failed", logger.Error(err))
-					conn.Close(websocket.StatusInternalError, "internal error")
 					return
 				} else if len(data) == 0 {
 					continue
@@ -189,16 +198,22 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 			buf[0] = MSG_TYPE_DATA
 			for {
 				n, err := ptmx.Read(buf[1:])
-				if err != nil {
+				if err != nil && errors.Is(err, syscall.EIO) {
+					conn.Close(websocket.StatusNormalClosure, "shell exited")
+					return
+				} else if err != nil {
 					LOG.Error(store.R.Context(), "ptmx.Read failed", logger.Error(err))
-					conn.Close(websocket.StatusInternalError, "internal error")
+					conn.Close(websocket.StatusInternalError, "ptmx read error")
 					return
 				}
 				if n > 0 {
 					err = conn.Write(store.R.Context(), websocket.MessageBinary, buf[:n+1])
-					if err != nil {
+					if err != nil && errors.Is(err, net.ErrClosed) {
+						LOG.Warn(store.R.Context(), "websocket is already closed")
+						return
+					} else if err != nil {
 						LOG.Error(store.R.Context(), "websocket.Write failed", logger.Error(err))
-						conn.Close(websocket.StatusInternalError, "internal error")
+						conn.Close(websocket.StatusInternalError, "websocket write error")
 						return
 					}
 				}
@@ -209,19 +224,3 @@ func webSocketHandlerWith(shellPath string, workingDir string) func(store *httpd
 		wg.Wait()
 	}
 }
-
-// shell exit
-// 2025-09-18 20:08:12 [E] ptmx.Read failed read /dev/ptmx: input/output error
-// 2025-09-18 20:08:12 [E] websocket.Read failed failed to get reader: received close frame: status = StatusInternalError and reason = "internal error"
-
-// client close tab
-// 2025-09-18 20:08:45 [E] websocket.Read failed failed to get reader: received close frame: status = StatusGoingAway and reason = ""
-// 2025-09-18 20:08:45 [E] ptmx.Read failed read /dev/ptmx: input/output error
-
-// client refresh tab
-// 2025-09-18 20:09:31 [E] websocket.Read failed failed to get reader: received close frame: status = StatusGoingAway and reason = ""
-// 2025-09-18 20:09:31 [E] ptmx.Read failed read /dev/ptmx: input/output error
-
-// client call ws.close()
-// 2025-09-18 20:11:01 [E] websocket.Read failed failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = ""
-// 2025-09-18 20:11:01 [E] ptmx.Read failed read /dev/ptmx: input/output error
