@@ -207,8 +207,16 @@ func handleNewChannel(ctx context.Context, newChannel ssh.NewChannel, shellPath 
 			}()
 			go func() {
 				LOG.Debugf(ctx, "%d.%d.%d cmd.Wait start", connID, channelID, requestID)
-				cmd.Wait()
-				channel.SendRequest("exit-status", false, ssh.Marshal(exitStatusMsg{0}))
+				if err := cmd.Wait(); err != nil {
+					if ee, ok := err.(*exec.ExitError); ok {
+						channel.SendRequest("exit-status", false, ssh.Marshal(exitStatusMsg{uint32(ee.ExitCode())}))
+					} else {
+						LOG.Errorf(ctx, "%d.%d.%d cmd.Wait error: %v", connID, channelID, requestID, err)
+						channel.SendRequest("exit-status", false, ssh.Marshal(exitStatusMsg{1}))
+					}
+				} else {
+					channel.SendRequest("exit-status", false, ssh.Marshal(exitStatusMsg{0}))
+				}
 				channel.Close()
 				LOG.Debugf(ctx, "%d.%d.%d cmd.Wait end", connID, channelID, requestID)
 			}()
