@@ -1,0 +1,15 @@
+# Ignore editor configuration
+.idea/
+.vscode/
+
+# Ignore directory of file with `-gitignore`
+**/*-gitignore/**
+**/*-gitignore
+
+# Ignore build results
+bin/
+output/
+main
+
+# Ignore config file
+config.json
