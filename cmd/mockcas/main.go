@@ -46,13 +46,15 @@ func main() {
 	setupConfigAndLogger(ctx)
 	LOG.Debugf(ctx, "use config: %+v", CFG)
 
+	setupHandlers(ctx)
 	mux := httpd.NewMux()
 	mux.HandleMiddleware(LOG.NewMiddleware())
-	mux.Handle("/cas/login", http.MethodGet, loginHandler)
+	mux.Handle("/cas/login", http.MethodGet, loginPageHandler)
+	mux.Handle("/cas/login", http.MethodPost, loginCheckHandler)
 	mux.Handle("/cas/logout", http.MethodGet, logoutHandler)
 	mux.Handle("/cas/validate", http.MethodGet, validateHandler)
 	mux.Handle("/cas/p3/serviceValidate", http.MethodGet, serviceValidateHandler)
-	mux.Handle("/cas/p3/proxyValidate", http.MethodGet, proxyValidateHandler)
+	mux.Handle("/cas/p3/proxyValidate", http.MethodGet, proxyValidateHandler) // not implemented
 
 	mux.Handle("/app/login", http.MethodGet, appLoginHandler)
 	mux.Handle("/app/validate", http.MethodGet, appValidateHandler)
