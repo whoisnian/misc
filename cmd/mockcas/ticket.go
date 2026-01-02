@@ -5,6 +5,13 @@ import (
 	"encoding/base32"
 	"strconv"
 	"sync"
+	"time"
+)
+
+const (
+	ServiceTicketTimeToLive        = 10       // 10 seconds
+	TicketGrantingTicketTimeToLive = 8 * 3600 // 8 hours
+	TicketGrantingCookieName       = "TGC-session"
 )
 
 type Ticket struct {
@@ -12,8 +19,9 @@ type Ticket struct {
 	id  uint64
 	rd  string
 
-	user *User
-	svc  *Service
+	user  *User
+	svc   *Service
+	ctime time.Time
 }
 
 func (t Ticket) String() string {
@@ -21,10 +29,12 @@ func (t Ticket) String() string {
 }
 
 type TicketStore struct {
+	// service ticket store
 	stSeq uint64
 	stMap map[string]*Ticket
 	stMux *sync.Mutex
 
+	// ticket granting ticket store
 	tgtSeq uint64
 	tgtMap map[string]*Ticket
 	tgtMux *sync.RWMutex
@@ -49,11 +59,12 @@ func (ts *TicketStore) GetServiceTicket(user *User, svc *Service) string {
 	buf := make([]byte, 20)
 	rand.Read(buf)
 	tkt := &Ticket{
-		typ:  "ST",
-		id:   ts.stSeq,
-		rd:   base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
-		user: user,
-		svc:  svc,
+		typ:   "ST",
+		id:    ts.stSeq,
+		rd:    base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
+		user:  user,
+		svc:   svc,
+		ctime: time.Now(),
 	}
 	ticket := tkt.String()
 	ts.stMap[ticket] = tkt
@@ -73,5 +84,49 @@ func (ts *TicketStore) ValidateServiceTicket(ticket string, service string) (*Us
 	if !tkt.svc.re.MatchString(service) {
 		return nil, nil, false
 	}
+	if time.Since(tkt.ctime) > ServiceTicketTimeToLive*time.Second {
+		return nil, nil, false
+	}
 	return tkt.user, tkt.svc, true
+}
+
+func (ts *TicketStore) GetTicketGrantingTicket(user *User) string {
+	ts.tgtMux.Lock()
+	defer ts.tgtMux.Unlock()
+
+	ts.tgtSeq++
+	buf := make([]byte, 40)
+	rand.Read(buf)
+	tkt := &Ticket{
+		typ:   "TGT",
+		id:    ts.tgtSeq,
+		rd:    base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
+		user:  user,
+		ctime: time.Now(),
+	}
+	ticket := tkt.String()
+	ts.tgtMap[ticket] = tkt
+	return ticket
+}
+
+func (ts *TicketStore) ValidateTicketGrantingTicket(ticket string) (*User, bool) {
+	ts.tgtMux.RLock()
+	defer ts.tgtMux.RUnlock()
+
+	tkt, exists := ts.tgtMap[ticket]
+	if !exists {
+		return nil, false
+	}
+	if time.Since(tkt.ctime) > TicketGrantingTicketTimeToLive*time.Second {
+		delete(ts.tgtMap, ticket)
+		return nil, false
+	}
+	return tkt.user, true
+}
+
+func (ts *TicketStore) DeleteTicketGrantingTicket(ticket string) {
+	ts.tgtMux.Lock()
+	defer ts.tgtMux.Unlock()
+
+	delete(ts.tgtMap, ticket)
 }

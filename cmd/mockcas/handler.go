@@ -58,6 +58,29 @@ func setupHandlers(ctx context.Context) {
 }
 
 func loginPageHandler(store *httpd.Store) {
+	if cookie, err := store.R.Cookie(TicketGrantingCookieName); err == nil {
+		if user, ok := ticketStore.ValidateTicketGrantingTicket(cookie.Value); ok {
+			service := store.R.URL.Query().Get("service")
+			if service == "" {
+				store.Respond200([]byte(user.Username + " login successful"))
+				return
+			}
+			svc, ok := staticData.MatchService(service)
+			if !ok {
+				http.Error(store.W, "unauthorized service", http.StatusForbidden)
+				return
+			}
+
+			ticket := ticketStore.GetServiceTicket(user, svc)
+			query := url.Values{"ticket": {string(ticket)}}
+			store.Redirect(http.StatusFound, service+"?"+query.Encode())
+			return
+		} else {
+			cookie.MaxAge = -1
+			http.SetCookie(store.W, cookie)
+		}
+	}
+
 	appName := defaultAppName
 	appDesc := defaultAppDesc
 	if service := store.R.URL.Query().Get("service"); service != "" {
@@ -89,7 +112,7 @@ func loginPageHandler(store *httpd.Store) {
 func loginCheckHandler(store *httpd.Store) {
 	username := store.R.FormValue("username")
 	password := store.R.FormValue("password")
-	// rememberMe := store.R.FormValue("rememberMe") == "on"
+	rememberMe := store.R.FormValue("rememberMe") == "on"
 	if username == "" || password == "" {
 		http.Error(store.W, "username or password is empty", http.StatusBadRequest)
 		return
@@ -98,6 +121,19 @@ func loginCheckHandler(store *httpd.Store) {
 	if !ok {
 		http.Error(store.W, "invalid username or password", http.StatusUnauthorized)
 		return
+	}
+
+	if rememberMe {
+		tgt := ticketStore.GetTicketGrantingTicket(user)
+		cookie := &http.Cookie{
+			Name:  TicketGrantingCookieName,
+			Value: tgt,
+			Path:  "/cas",
+
+			MaxAge:   TicketGrantingTicketTimeToLive,
+			HttpOnly: true,
+		}
+		http.SetCookie(store.W, cookie)
 	}
 
 	service := store.R.URL.Query().Get("service")
@@ -117,7 +153,22 @@ func loginCheckHandler(store *httpd.Store) {
 }
 
 func logoutHandler(store *httpd.Store) {
-
+	if cookie, err := store.R.Cookie(TicketGrantingCookieName); err == nil {
+		ticketStore.DeleteTicketGrantingTicket(cookie.Value)
+		cookie.MaxAge = -1
+		http.SetCookie(store.W, cookie)
+	}
+	service := store.R.URL.Query().Get("service")
+	if service == "" {
+		store.Respond200([]byte("logout successful"))
+		return
+	}
+	_, ok := staticData.MatchService(service)
+	if !ok {
+		http.Error(store.W, "unauthorized service", http.StatusForbidden)
+		return
+	}
+	store.Redirect(http.StatusFound, service)
 }
 
 func validateHandler(store *httpd.Store) {
