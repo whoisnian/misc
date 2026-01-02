@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 
 	"github.com/whoisnian/glb/httpd"
 	"github.com/whoisnian/glb/logger"
@@ -136,7 +137,20 @@ func validateHandler(store *httpd.Store) {
 }
 
 func serviceValidateHandler(store *httpd.Store) {
+	ticket := store.R.URL.Query().Get("ticket")
+	service := store.R.URL.Query().Get("service")
+	format := strings.ToUpper(store.R.URL.Query().Get("format")) // XML or JSON, default XML
+	if ticket == "" || service == "" {
+		http.Error(store.W, "ticket or service is empty", http.StatusBadRequest)
+		return
+	}
 
+	user, _, ok := ticketStore.ValidateServiceTicket(ticket, service)
+	if !ok {
+		writeServiceResponseFailure(store, "INVALID_TICKET", "Ticket "+ticket+" not recognized", format)
+		return
+	}
+	writeServiceResponseSuccess(store, user, format)
 }
 
 func proxyValidateHandler(store *httpd.Store) {
