@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"time"
 
 	"github.com/whoisnian/glb/httpd"
 	"github.com/whoisnian/glb/logger"
@@ -136,4 +137,42 @@ func writeServiceResponseSuccess(store *httpd.Store, user *User, format string) 
 		LOG.Error(store.R.Context(), "encode service success response error", logger.Error(err))
 		store.Error500("encode service success response error")
 	}
+}
+
+// Example XML LogoutRequest:
+//
+// <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="LR-2-8Q1vCMfqg2Dv2djYfAHCgMQ9" Version="2.0" IssueInstant="2026-01-04T14:25:34Z">
+//   <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">casuser</saml:NameID>
+//   <samlp:SessionIndex>ST-2--vHSAaTAVXhAk2yIT8DZgeWDvQE-archvm</samlp:SessionIndex>
+// </samlp:LogoutRequest>
+
+type NameID struct {
+	XMLName xml.Name `xml:"saml:NameID"`
+	Xmlns   string   `xml:"xmlns:saml,attr"`
+	Value   string   `xml:",chardata"`
+}
+
+type SingleLogoutRequest struct {
+	XMLName      xml.Name `xml:"samlp:LogoutRequest"`
+	Xmlns        string   `xml:"xmlns:samlp,attr"`
+	ID           string   `xml:"ID,attr"`
+	Version      string   `xml:"Version,attr"`
+	IssueInstant string   `xml:"IssueInstant,attr"`
+	NameID       NameID   `xml:"saml:NameID"`
+	SessionIndex string   `xml:"samlp:SessionIndex"`
+}
+
+func encodeSingleLogoutRequest(username string, sessionIndex string) ([]byte, error) {
+	logoutRequest := SingleLogoutRequest{
+		Xmlns:        "urn:oasis:names:tc:SAML:2.0:protocol",
+		ID:           "LR-" + sessionIndex,
+		Version:      "2.0",
+		IssueInstant: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		NameID: NameID{
+			Xmlns: "urn:oasis:names:tc:SAML:2.0:assertion",
+			Value: username,
+		},
+		SessionIndex: sessionIndex,
+	}
+	return xml.Marshal(logoutRequest)
 }

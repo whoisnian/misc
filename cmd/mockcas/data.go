@@ -16,7 +16,7 @@ type Service struct {
 	Name        string
 	Description string
 	ServiceId   string
-	LogoutUrl   string // TODO: for SLO (Single Logout)
+	LogoutUrl   string // url or config placeholder
 
 	re *regexp.Regexp
 }
@@ -37,6 +37,7 @@ var (
 		Name:        "Test App",
 		Description: "This is a test application.",
 		ServiceId:   "http://.*",
+		LogoutUrl:   "__CFG_CLIENT_LOGOUT_URL__",
 	}}
 )
 

@@ -21,6 +21,7 @@ var CFG struct {
 	ListenAddr       string `flag:"l,0.0.0.0:9090,Server listen addr"`
 	ServerUrlPrefix  string `flag:"s,,URL prefix of the CAS server, auto detected if empty"`
 	ClientServiceUrl string `flag:"c,,Service URL of the CAS client application, auto detected if empty"`
+	ClientLogoutUrl  string `flag:"o,,Logout URL of the CAS client application, auto detected if empty"`
 }
 
 var LOG *logger.Logger
@@ -58,6 +59,8 @@ func main() {
 
 	mux.Handle("/app/login", http.MethodGet, appLoginHandler)
 	mux.Handle("/app/validate", http.MethodGet, appValidateHandler)
+	mux.Handle("/app/logout", http.MethodGet, appLogoutHandler)
+	mux.Handle("/app/logout", http.MethodPost, appSingleLogoutHandler)
 
 	predictAddr := CFG.ListenAddr
 	if host, port, err := net.SplitHostPort(CFG.ListenAddr); err == nil && (host == "" || host == "0.0.0.0") {
@@ -71,8 +74,12 @@ func main() {
 	if CFG.ClientServiceUrl == "" {
 		CFG.ClientServiceUrl = "http://" + predictAddr + "/app/validate"
 	}
+	if CFG.ClientLogoutUrl == "" {
+		CFG.ClientLogoutUrl = "http://" + predictAddr + "/app/logout"
+	}
 	LOG.Infof(ctx, "using cas server url prefix:  %s", CFG.ServerUrlPrefix)
 	LOG.Infof(ctx, "using cas client service url: %s", CFG.ClientServiceUrl)
+	LOG.Infof(ctx, "using cas client logout url:  %s", CFG.ClientLogoutUrl)
 
 	server := &http.Server{Addr: CFG.ListenAddr, Handler: mux}
 	go func() {

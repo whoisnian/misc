@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"html"
 	"html/template"
+	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 
@@ -62,7 +63,10 @@ func loginPageHandler(store *httpd.Store) {
 		if user, ok := ticketStore.ValidateTicketGrantingTicket(cookie.Value); ok {
 			service := store.R.URL.Query().Get("service")
 			if service == "" {
-				store.Respond200([]byte(user.Username + " login successful"))
+				store.Respond200([]byte(`<body><pre>` +
+					html.EscapeString(user.Username) + ` login successful, ` +
+					`click <a href="/cas/logout">here</a> to logout.` +
+					`</pre></body>`))
 				return
 			}
 			svc, ok := staticData.MatchService(service)
@@ -72,6 +76,7 @@ func loginPageHandler(store *httpd.Store) {
 			}
 
 			ticket := ticketStore.GetServiceTicket(user, svc)
+			ticketStore.CreateTicketBinding(cookie.Value, ticket)
 			query := url.Values{"ticket": {string(ticket)}}
 			store.Redirect(http.StatusFound, service+"?"+query.Encode())
 			return
@@ -112,7 +117,10 @@ func loginPageHandler(store *httpd.Store) {
 func loginCheckHandler(store *httpd.Store) {
 	username := store.R.FormValue("username")
 	password := store.R.FormValue("password")
-	rememberMe := store.R.FormValue("rememberMe") == "on"
+	maxAge := 0
+	if store.R.FormValue("rememberMe") == "on" {
+		maxAge = TicketGrantingTicketTimeToLive
+	}
 	if username == "" || password == "" {
 		http.Error(store.W, "username or password is empty", http.StatusBadRequest)
 		return
@@ -123,22 +131,22 @@ func loginCheckHandler(store *httpd.Store) {
 		return
 	}
 
-	if rememberMe {
-		tgt := ticketStore.GetTicketGrantingTicket(user)
-		cookie := &http.Cookie{
-			Name:  TicketGrantingCookieName,
-			Value: tgt,
-			Path:  "/cas",
-
-			MaxAge:   TicketGrantingTicketTimeToLive,
-			HttpOnly: true,
-		}
-		http.SetCookie(store.W, cookie)
+	tgt := ticketStore.GetTicketGrantingTicket(user)
+	cookie := &http.Cookie{
+		Name:     TicketGrantingCookieName,
+		Value:    tgt,
+		Path:     "/cas",
+		MaxAge:   maxAge,
+		HttpOnly: true,
 	}
+	http.SetCookie(store.W, cookie)
 
 	service := store.R.URL.Query().Get("service")
 	if service == "" {
-		store.Respond200([]byte(username + " login successful"))
+		store.Respond200([]byte(`<body><pre>` +
+			html.EscapeString(username) + ` login successful, ` +
+			`click <a href="/cas/logout">here</a> to logout.` +
+			`</pre></body>`))
 		return
 	}
 	svc, ok := staticData.MatchService(service)
@@ -148,6 +156,7 @@ func loginCheckHandler(store *httpd.Store) {
 	}
 
 	ticket := ticketStore.GetServiceTicket(user, svc)
+	ticketStore.CreateTicketBinding(tgt, ticket)
 	query := url.Values{"ticket": {string(ticket)}}
 	store.Redirect(http.StatusFound, service+"?"+query.Encode())
 }
@@ -157,10 +166,19 @@ func logoutHandler(store *httpd.Store) {
 		ticketStore.DeleteTicketGrantingTicket(cookie.Value)
 		cookie.MaxAge = -1
 		http.SetCookie(store.W, cookie)
+
+		sts := ticketStore.DeleteBindings(cookie.Value)
+		for _, st := range sts {
+			tkt := ticketStore.DeleteServiceTicket(st)
+			go asyncLogout(tkt.user.Username, st, tkt.svc.LogoutUrl)
+		}
 	}
 	service := store.R.URL.Query().Get("service")
 	if service == "" {
-		store.Respond200([]byte("logout successful"))
+		store.Respond200([]byte(`<body><pre>` +
+			`logout successful, ` +
+			`click <a href="/cas/login">here</a> to login.` +
+			`</pre></body>`))
 		return
 	}
 	_, ok := staticData.MatchService(service)
@@ -169,6 +187,32 @@ func logoutHandler(store *httpd.Store) {
 		return
 	}
 	store.Redirect(http.StatusFound, service)
+}
+
+func asyncLogout(username, sessionIndex, logoutUrl string) {
+	ctx := context.TODO()
+	logoutReqData, err := encodeSingleLogoutRequest(username, sessionIndex)
+	if err != nil {
+		LOG.Warn(ctx, "encode single logout request error", logger.Error(err))
+		return
+	}
+	if logoutUrl == "__CFG_CLIENT_LOGOUT_URL__" {
+		logoutUrl = CFG.ClientLogoutUrl
+	}
+	values := url.Values{"logoutRequest": {string(logoutReqData)}}
+	resp, err := http.PostForm(logoutUrl, values)
+	if err != nil {
+		LOG.Warn(ctx, "post single logout request error", logger.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		LOG.Infof(ctx, "single logout request to %s received %s", logoutUrl, resp.Status)
+	} else {
+		buf := make([]byte, 4096)
+		n, _ := io.ReadFull(resp.Body, buf)
+		LOG.Warnf(ctx, "single logout request to %s received %s: %s", logoutUrl, resp.Status, buf[:n])
+	}
 }
 
 func validateHandler(store *httpd.Store) {
@@ -206,32 +250,4 @@ func serviceValidateHandler(store *httpd.Store) {
 
 func proxyValidateHandler(store *httpd.Store) {
 	http.Error(store.W, "not implemented", http.StatusNotImplemented)
-}
-
-func appLoginHandler(store *httpd.Store) {
-	query := url.Values{"service": {CFG.ClientServiceUrl}}
-	store.Redirect(http.StatusFound, CFG.ServerUrlPrefix+"/login?"+query.Encode())
-}
-
-func appValidateHandler(store *httpd.Store) {
-	ticket := store.R.URL.Query().Get("ticket")
-
-	resp, err := http.Get(CFG.ServerUrlPrefix + "/p3/serviceValidate?" + url.Values{
-		"ticket":  {ticket},
-		"service": {CFG.ClientServiceUrl},
-	}.Encode())
-	if err != nil {
-		LOG.Error(store.R.Context(), "cas service validate error", logger.Error(err))
-		store.Error500("cas service validate error")
-		return
-	}
-	defer resp.Body.Close()
-
-	data, err := httputil.DumpResponse(resp, true)
-	if err != nil {
-		LOG.Error(store.R.Context(), "dump validate response error", logger.Error(err))
-		store.Error500("dump validate response error")
-		return
-	}
-	store.Respond200(data)
 }

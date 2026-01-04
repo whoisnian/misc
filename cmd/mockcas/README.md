@@ -8,6 +8,7 @@ Login with default username `casuser` and password `Mellon`.
 go run ./cmd/mockcas
 # 2026-01-02 00:09:12 [I] using cas server url prefix:  http://192.168.1.2:9090/cas
 # 2026-01-02 00:09:12 [I] using cas client service url: http://192.168.1.2:9090/app/validate
+# 2026-01-02 00:09:12 [I] using cas client logout url:  http://192.168.1.2:9090/app/logout
 # 2026-01-02 00:09:12 [I] service httpd started: http://0.0.0.0:9090
 ```
 
@@ -19,4 +20,5 @@ go run ./cmd/mockcas
   -l      string   Server listen addr [CFG_LISTEN_ADDR] (default "0.0.0.0:9090")
   -s      string   URL prefix of the CAS server, auto detected if empty [CFG_SERVER_URL_PREFIX]
   -c      string   Service URL of the CAS client application, auto detected if empty [CFG_CLIENT_SERVICE_URL]
+  -o      string   Logout URL of the CAS client application, auto detected if empty [CFG_CLIENT_LOGOUT_URL]
 ```

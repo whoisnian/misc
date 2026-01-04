@@ -15,17 +15,18 @@ const (
 )
 
 type Ticket struct {
-	typ string
-	id  uint64
-	rd  string
+	prefix string
+	id     uint64
+	rand   string
 
 	user  *User
 	svc   *Service
 	ctime time.Time
+	used  bool
 }
 
 func (t Ticket) String() string {
-	return t.typ + "-" + strconv.FormatUint(t.id, 10) + "-" + t.rd
+	return t.prefix + "-" + strconv.FormatUint(t.id, 10) + "-" + t.rand
 }
 
 type TicketStore struct {
@@ -38,6 +39,10 @@ type TicketStore struct {
 	tgtSeq uint64
 	tgtMap map[string]*Ticket
 	tgtMux *sync.RWMutex
+
+	// one tgt has many st(s)
+	subMap map[string][]string
+	subMux *sync.Mutex
 }
 
 func NewTicketStore() *TicketStore {
@@ -48,6 +53,8 @@ func NewTicketStore() *TicketStore {
 		tgtSeq: 0,
 		tgtMap: make(map[string]*Ticket),
 		tgtMux: new(sync.RWMutex),
+		subMap: make(map[string][]string),
+		subMux: new(sync.Mutex),
 	}
 }
 
@@ -59,12 +66,13 @@ func (ts *TicketStore) GetServiceTicket(user *User, svc *Service) string {
 	buf := make([]byte, 20)
 	rand.Read(buf)
 	tkt := &Ticket{
-		typ:   "ST",
-		id:    ts.stSeq,
-		rd:    base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
-		user:  user,
-		svc:   svc,
-		ctime: time.Now(),
+		prefix: "ST",
+		id:     ts.stSeq,
+		rand:   base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
+		user:   user,
+		svc:    svc,
+		ctime:  time.Now(),
+		used:   false,
 	}
 	ticket := tkt.String()
 	ts.stMap[ticket] = tkt
@@ -79,8 +87,10 @@ func (ts *TicketStore) ValidateServiceTicket(ticket string, service string) (*Us
 	if !exists {
 		return nil, nil, false
 	}
-	delete(ts.stMap, ticket)
-
+	if tkt.used {
+		return nil, nil, false
+	}
+	tkt.used = true
 	if !tkt.svc.re.MatchString(service) {
 		return nil, nil, false
 	}
@@ -88,6 +98,15 @@ func (ts *TicketStore) ValidateServiceTicket(ticket string, service string) (*Us
 		return nil, nil, false
 	}
 	return tkt.user, tkt.svc, true
+}
+
+func (ts *TicketStore) DeleteServiceTicket(ticket string) *Ticket {
+	ts.stMux.Lock()
+	defer ts.stMux.Unlock()
+
+	tkt := ts.stMap[ticket]
+	delete(ts.stMap, ticket)
+	return tkt
 }
 
 func (ts *TicketStore) GetTicketGrantingTicket(user *User) string {
@@ -98,12 +117,12 @@ func (ts *TicketStore) GetTicketGrantingTicket(user *User) string {
 	buf := make([]byte, 40)
 	rand.Read(buf)
 	tkt := &Ticket{
-		typ:   "TGT",
-		id:    ts.tgtSeq,
-		rd:    base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
-		user:  user,
-		ctime: time.Now(),
-	}
+		prefix: "TGT",
+		id:     ts.tgtSeq,
+		rand:   base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf),
+		user:   user,
+		ctime:  time.Now(),
+	} // ignore svc and used
 	ticket := tkt.String()
 	ts.tgtMap[ticket] = tkt
 	return ticket
@@ -118,15 +137,32 @@ func (ts *TicketStore) ValidateTicketGrantingTicket(ticket string) (*User, bool)
 		return nil, false
 	}
 	if time.Since(tkt.ctime) > TicketGrantingTicketTimeToLive*time.Second {
-		delete(ts.tgtMap, ticket)
 		return nil, false
 	}
 	return tkt.user, true
 }
 
-func (ts *TicketStore) DeleteTicketGrantingTicket(ticket string) {
+func (ts *TicketStore) DeleteTicketGrantingTicket(ticket string) *Ticket {
 	ts.tgtMux.Lock()
 	defer ts.tgtMux.Unlock()
 
+	tkt := ts.tgtMap[ticket]
 	delete(ts.tgtMap, ticket)
+	return tkt
+}
+
+func (ts *TicketStore) CreateTicketBinding(tgt string, st string) {
+	ts.subMux.Lock()
+	defer ts.subMux.Unlock()
+
+	ts.subMap[tgt] = append(ts.subMap[tgt], st)
+}
+
+func (ts *TicketStore) DeleteBindings(tgt string) []string {
+	ts.subMux.Lock()
+	defer ts.subMux.Unlock()
+
+	stList := ts.subMap[tgt]
+	delete(ts.subMap, tgt)
+	return stList
 }
