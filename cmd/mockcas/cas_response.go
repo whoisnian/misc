@@ -4,31 +4,26 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"time"
-
-	"github.com/whoisnian/glb/httpd"
-	"github.com/whoisnian/glb/logger"
 )
 
 // Example XML authenticationFailure response:
 //
-// <cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
-//   <cas:authenticationFailure code="INVALID_TICKET">Ticket ST-1-RMMZGZFJQDSETVTWAOTIBCPKXIRCI5ZF not recognized</cas:authenticationFailure>
-// </cas:serviceResponse>
-
+//	<cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
+//	  <cas:authenticationFailure code="INVALID_TICKET">Ticket ST-1-RMMZGZFJQDSETVTWAOTIBCPKXIRCI5ZF not recognized</cas:authenticationFailure>
+//	</cas:serviceResponse>
+//
 // Example JSON authenticationFailure response:
 //
-// {
-//   "serviceResponse": {
-//     "authenticationFailure": {
-//       "code": "INVALID_TICKET",
-//       "description": "Ticket ST-1-RMMZGZFJQDSETVTWAOTIBCPKXIRCI5ZF not recognized"
-//     }
-//   }
-// }
-
-type AuthenticationFailure struct {
-	Code        string `xml:"code,attr" json:"code"`
-	Description string `xml:",chardata" json:"description"`
+//	{
+//	  "serviceResponse": {
+//	    "authenticationFailure": {
+//	      "code": "INVALID_TICKET",
+//	      "description": "Ticket ST-1-RMMZGZFJQDSETVTWAOTIBCPKXIRCI5ZF not recognized"
+//	    }
+//	  }
+//	}
+type ServiceResponseFailureWrapper struct {
+	ServiceResponseFailure `json:"serviceResponse"`
 }
 
 type ServiceResponseFailure struct {
@@ -37,67 +32,52 @@ type ServiceResponseFailure struct {
 	Content AuthenticationFailure `xml:"cas:authenticationFailure" json:"authenticationFailure"`
 }
 
-type ServiceResponseFailureWrapper struct {
-	ServiceResponseFailure `json:"serviceResponse"`
+type AuthenticationFailure struct {
+	Code        string `xml:"code,attr" json:"code"`
+	Description string `xml:",chardata" json:"description"`
 }
 
-func writeServiceResponseFailure(store *httpd.Store, code, desc, format string) {
+func encodeServiceResponseFailure(code, desc, format string) ([]byte, error) {
 	resp := ServiceResponseFailureWrapper{
 		ServiceResponseFailure{
 			Xmlns:   "http://www.yale.edu/tp/cas",
 			Content: AuthenticationFailure{Code: code, Description: desc},
 		},
 	}
-	var err error
 	if format == "JSON" {
-		enc := json.NewEncoder(store.W)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(resp)
+		return json.MarshalIndent(resp, "", "  ")
 	} else {
-		enc := xml.NewEncoder(store.W)
-		enc.Indent("", "  ")
-		err = enc.Encode(resp)
-	}
-	if err != nil {
-		LOG.Error(store.R.Context(), "encode service failure response error", logger.Error(err))
-		store.Error500("encode service failure response error")
+		return xml.MarshalIndent(resp, "", "  ")
 	}
 }
 
 // Example XML authenticationSuccess response:
 //
-// <cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
-//   <cas:authenticationSuccess>
-//     <cas:user>casuser</cas:user>
-//     <cas:attributes>
-//       <cas:mail>casuser@example.org</cas:mail>
-//       <cas:mobile>12345678910</cas:mobile>
-//     </cas:attributes>
-//   </cas:authenticationSuccess>
-// </cas:serviceResponse>
-
+//	<cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
+//	  <cas:authenticationSuccess>
+//	    <cas:user>casuser</cas:user>
+//	    <cas:attributes>
+//	      <cas:mail>casuser@example.org</cas:mail>
+//	      <cas:mobile>12345678910</cas:mobile>
+//	    </cas:attributes>
+//	  </cas:authenticationSuccess>
+//	</cas:serviceResponse>
+//
 // Example JSON authenticationSuccess response:
 //
-// {
-//   "serviceResponse": {
-//     "authenticationSuccess": {
-//       "user": "casuser",
-//       "attributes": {
-//         "mail": "casuser@example.org",
-//         "mobile": "12345678910"
-//       }
-//     }
-//   }
-// }
-
-type UserAttributes struct {
-	Mail   string `xml:"cas:mail" json:"mail"`
-	Mobile string `xml:"cas:mobile" json:"mobile"`
-}
-
-type AuthenticationSuccess struct {
-	User  string         `xml:"cas:user" json:"user"`
-	Attrs UserAttributes `xml:"cas:attributes" json:"attributes"`
+//	{
+//	  "serviceResponse": {
+//	    "authenticationSuccess": {
+//	      "user": "casuser",
+//	      "attributes": {
+//	        "mail": "casuser@example.org",
+//	        "mobile": "12345678910"
+//	      }
+//	    }
+//	  }
+//	}
+type ServiceResponseSuccessWrapper struct {
+	ServiceResponseSuccess `json:"serviceResponse"`
 }
 
 type ServiceResponseSuccess struct {
@@ -106,52 +86,42 @@ type ServiceResponseSuccess struct {
 	Content AuthenticationSuccess `xml:"cas:authenticationSuccess" json:"authenticationSuccess"`
 }
 
-type ServiceResponseSuccessWrapper struct {
-	ServiceResponseSuccess `json:"serviceResponse"`
+type AuthenticationSuccess struct {
+	User  string         `xml:"cas:user" json:"user"`
+	Attrs UserAttributes `xml:"cas:attributes" json:"attributes"`
 }
 
-func writeServiceResponseSuccess(store *httpd.Store, user *User, format string) {
+type UserAttributes struct {
+	Mail   string `xml:"cas:mail" json:"mail"`
+	Mobile string `xml:"cas:mobile" json:"mobile"`
+}
+
+func encodeServiceResponseSuccess(username, mail, mobile, format string) ([]byte, error) {
 	resp := ServiceResponseSuccessWrapper{
 		ServiceResponseSuccess{
 			Xmlns: "http://www.yale.edu/tp/cas",
 			Content: AuthenticationSuccess{
-				User: user.Username,
+				User: username,
 				Attrs: UserAttributes{
-					Mail:   user.Mail,
-					Mobile: user.Mobile,
+					Mail:   mail,
+					Mobile: mobile,
 				},
 			},
 		},
 	}
-	var err error
 	if format == "JSON" {
-		enc := json.NewEncoder(store.W)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(resp)
+		return json.MarshalIndent(resp, "", "  ")
 	} else {
-		enc := xml.NewEncoder(store.W)
-		enc.Indent("", "  ")
-		err = enc.Encode(resp)
-	}
-	if err != nil {
-		LOG.Error(store.R.Context(), "encode service success response error", logger.Error(err))
-		store.Error500("encode service success response error")
+		return xml.MarshalIndent(resp, "", "  ")
 	}
 }
 
 // Example XML LogoutRequest:
 //
-// <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="LR-2-8Q1vCMfqg2Dv2djYfAHCgMQ9" Version="2.0" IssueInstant="2026-01-04T14:25:34Z">
-//   <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">casuser</saml:NameID>
-//   <samlp:SessionIndex>ST-2--vHSAaTAVXhAk2yIT8DZgeWDvQE-archvm</samlp:SessionIndex>
-// </samlp:LogoutRequest>
-
-type NameID struct {
-	XMLName xml.Name `xml:"saml:NameID"`
-	Xmlns   string   `xml:"xmlns:saml,attr"`
-	Value   string   `xml:",chardata"`
-}
-
+//	<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="LR-2-8Q1vCMfqg2Dv2djYfAHCgMQ9" Version="2.0" IssueInstant="2026-01-04T14:25:34Z">
+//	  <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">casuser</saml:NameID>
+//	  <samlp:SessionIndex>ST-2--vHSAaTAVXhAk2yIT8DZgeWDvQE-archvm</samlp:SessionIndex>
+//	</samlp:LogoutRequest>
 type SingleLogoutRequest struct {
 	XMLName      xml.Name `xml:"samlp:LogoutRequest"`
 	Xmlns        string   `xml:"xmlns:samlp,attr"`
@@ -160,6 +130,12 @@ type SingleLogoutRequest struct {
 	IssueInstant string   `xml:"IssueInstant,attr"`
 	NameID       NameID   `xml:"saml:NameID"`
 	SessionIndex string   `xml:"samlp:SessionIndex"`
+}
+
+type NameID struct {
+	XMLName xml.Name `xml:"saml:NameID"`
+	Xmlns   string   `xml:"xmlns:saml,attr"`
+	Value   string   `xml:",chardata"`
 }
 
 func encodeSingleLogoutRequest(username string, sessionIndex string) ([]byte, error) {

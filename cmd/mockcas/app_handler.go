@@ -11,16 +11,16 @@ import (
 )
 
 func appLoginHandler(store *httpd.Store) {
-	query := url.Values{"service": {CFG.ClientServiceUrl}}
-	store.Redirect(http.StatusFound, CFG.ServerUrlPrefix+"/login?"+query.Encode())
+	query := url.Values{"service": {CFG.CasClientServiceUrl}}
+	store.Redirect(http.StatusFound, CFG.CasServerUrlPrefix+"/login?"+query.Encode())
 }
 
 func appValidateHandler(store *httpd.Store) {
 	ticket := store.R.URL.Query().Get("ticket")
 
-	resp, err := http.Get(CFG.ServerUrlPrefix + "/p3/serviceValidate?" + url.Values{
+	resp, err := http.Get(CFG.CasServerUrlPrefix + "/p3/serviceValidate?" + url.Values{
 		"ticket":  {ticket},
-		"service": {CFG.ClientServiceUrl},
+		"service": {CFG.CasClientServiceUrl},
 	}.Encode())
 	if err != nil {
 		LOG.Error(store.R.Context(), "cas service validate error", logger.Error(err))
@@ -39,16 +39,15 @@ func appValidateHandler(store *httpd.Store) {
 }
 
 func appLogoutHandler(store *httpd.Store) {
-	store.Redirect(http.StatusFound, CFG.ServerUrlPrefix+"/logout")
+	store.Redirect(http.StatusFound, CFG.CasServerUrlPrefix+"/logout")
 }
 
 // Example XML LogoutRequest:
 //
-// <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="LR-2-8Q1vCMfqg2Dv2djYfAHCgMQ9" Version="2.0" IssueInstant="2026-01-04T14:25:34Z">
-//   <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">casuser</saml:NameID>
-//   <samlp:SessionIndex>ST-2--vHSAaTAVXhAk2yIT8DZgeWDvQE-archvm</samlp:SessionIndex>
-// </samlp:LogoutRequest>
-
+//	<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="LR-2-8Q1vCMfqg2Dv2djYfAHCgMQ9" Version="2.0" IssueInstant="2026-01-04T14:25:34Z">
+//	  <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">casuser</saml:NameID>
+//	  <samlp:SessionIndex>ST-2--vHSAaTAVXhAk2yIT8DZgeWDvQE-archvm</samlp:SessionIndex>
+//	</samlp:LogoutRequest>
 type LogoutRequest struct {
 	XMLName      xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol LogoutRequest"`
 	ID           string   `xml:"ID,attr"`

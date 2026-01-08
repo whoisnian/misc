@@ -17,11 +17,19 @@ import (
 )
 
 var CFG struct {
-	Debug            bool   `flag:"d,false,Enable debug output"`
-	ListenAddr       string `flag:"l,0.0.0.0:9090,Server listen addr"`
-	ServerUrlPrefix  string `flag:"s,,URL prefix of the CAS server, auto detected if empty"`
-	ClientServiceUrl string `flag:"c,,Service URL of the CAS client application, auto detected if empty"`
-	ClientLogoutUrl  string `flag:"o,,Logout URL of the CAS client application, auto detected if empty"`
+	Debug      bool   `flag:"d,false,Enable debug output"`
+	ListenAddr string `flag:"l,0.0.0.0:9090,Server listen addr"`
+
+	CasServerUrlPrefix  string `flag:"cas-server-url-prefix,,URL prefix of the CAS server, auto detected if empty"`
+	CasClientServiceUrl string `flag:"cas-client-service-url,,Service URL of the CAS client application, auto detected if empty"`
+	CasClientLogoutUrl  string `flag:"cas-client-logout-url,,Logout URL of the CAS client application, auto detected if empty"`
+	CasAuthMethod       string `flag:"cas-auth-method,static,Authentication method of the CAS server, static or ldap"`
+
+	LDAPServerUrl    string `flag:"|ldap-server-url|ldap://127.0.0.1:3890|URL of the LDAP server"`
+	LDAPBindDN       string `flag:"|ldap-bind-dn|cn=admin,ou=people,dc=example,dc=com|DN to bind to the LDAP server"`
+	LDAPBindPass     string `flag:"|ldap-bind-pass|password|Password for the LDAP bind DN"`
+	LDAPBaseDN       string `flag:"|ldap-base-dn|ou=people,dc=example,dc=com|Base DN for LDAP search"`
+	LDAPSearchFilter string `flag:"|ldap-search-filter|(uid=%s)|Filter for LDAP search"`
 }
 
 var LOG *logger.Logger
@@ -47,7 +55,9 @@ func main() {
 	setupConfigAndLogger(ctx)
 	LOG.Debugf(ctx, "use config: %+v", CFG)
 
-	setupHandlers(ctx)
+	setupUserProvider(ctx)
+	setupTicketProvider(ctx)
+
 	mux := httpd.NewMux()
 	mux.HandleMiddleware(LOG.NewMiddleware())
 	mux.Handle("/cas/login", http.MethodGet, loginPageHandler)
@@ -68,22 +78,22 @@ func main() {
 			predictAddr = net.JoinHostPort(ip.String(), port)
 		}
 	}
-	if CFG.ServerUrlPrefix == "" {
-		CFG.ServerUrlPrefix = "http://" + predictAddr + "/cas"
+	if CFG.CasServerUrlPrefix == "" {
+		CFG.CasServerUrlPrefix = "http://" + predictAddr + "/cas"
 	}
-	if CFG.ClientServiceUrl == "" {
-		CFG.ClientServiceUrl = "http://" + predictAddr + "/app/validate"
+	if CFG.CasClientServiceUrl == "" {
+		CFG.CasClientServiceUrl = "http://" + predictAddr + "/app/validate"
 	}
-	if CFG.ClientLogoutUrl == "" {
-		CFG.ClientLogoutUrl = "http://" + predictAddr + "/app/logout"
+	if CFG.CasClientLogoutUrl == "" {
+		CFG.CasClientLogoutUrl = "http://" + predictAddr + "/app/logout"
 	}
-	LOG.Infof(ctx, "using cas server url prefix:  %s", CFG.ServerUrlPrefix)
-	LOG.Infof(ctx, "using cas client service url: %s", CFG.ClientServiceUrl)
-	LOG.Infof(ctx, "using cas client logout url:  %s", CFG.ClientLogoutUrl)
+	LOG.Infof(ctx, "using cas server url prefix:  %s", CFG.CasServerUrlPrefix)
+	LOG.Infof(ctx, "using cas client service url: %s", CFG.CasClientServiceUrl)
+	LOG.Infof(ctx, "using cas client logout url:  %s", CFG.CasClientLogoutUrl)
 
 	server := &http.Server{Addr: CFG.ListenAddr, Handler: mux}
 	go func() {
-		LOG.Infof(ctx, "service httpd started: http://%s", CFG.ListenAddr)
+		LOG.Infof(ctx, "service started: http://%s", CFG.ListenAddr)
 		if err := server.ListenAndServe(); errors.Is(err, http.ErrServerClosed) {
 			LOG.Warn(ctx, "service shutting down")
 		} else if err != nil {
