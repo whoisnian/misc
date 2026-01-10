@@ -14,14 +14,14 @@ import (
 	"github.com/whoisnian/glb/logger"
 )
 
-const loginPageTemplate = `<!DOCTYPE html>
+const loginPageRawTemplate = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mock CAS Login</title>
 </head>
-<body>
+<body style="font-family:ui-monospace,Menlo,Consolas,Hack,Liberation Mono,Microsoft Yahei,Noto Sans Mono CJK SC,sans-serif;">
   <h1>Mock CAS Login</h1>
   <p>Welcome to Mock CAS Server</p>
   <p>This is a mock CAS server for testing purposes.</p>
@@ -30,41 +30,21 @@ const loginPageTemplate = `<!DOCTYPE html>
     <input type="text" id="username" name="username" required><br><br>
     <label for="password">Password:</label>
     <input type="password" id="password" name="password" required><br><br>
-    <label for="remember">Remember Me:</label>
-    <input type="checkbox" id="remember" name="rememberMe"><br><br>
     <input type="submit" value="Login">
   </form>
 </body>
 </html>`
 
-var loginPageTmpl = template.Must(template.New("loginPage").Parse(loginPageTemplate))
+var loginPageTmpl = template.Must(template.New("loginPage").Parse(loginPageRawTemplate))
 
 func loginPageHandler(store *httpd.Store) {
 	if cookie, err := store.R.Cookie(TicketGrantingCookieName); err == nil {
-		if user, err := TP.ValidateTicketGrantingTicket(store.R.Context(), cookie.Value); err == nil {
-			service := store.R.URL.Query().Get("service")
-			if service == "" {
-				store.Respond200([]byte(`<body><pre>` +
-					html.EscapeString(user.Username) + ` login successful, ` +
-					`click <a href="/cas/logout">here</a> to logout.` +
-					`</pre></body>`))
-				return
-			}
-
-			ticket, err := TP.GetServiceTicket(store.R.Context(), user)
-			if err != nil {
-				LOG.Error(store.R.Context(), "get service ticket error", logger.Error(err))
-				store.Error500("get service ticket error")
-				return
-			}
-
-			TP.CreateTicketBinding(store.R.Context(), cookie.Value, ticket)
-			query := url.Values{"ticket": {string(ticket)}}
-			store.Redirect(http.StatusFound, service+"?"+query.Encode())
+		if user, err := TP.ValidateTicket(store.R.Context(), cookie.Value, false); err == nil {
+			loginSuccessPageOrRedirectToService(store, user, cookie.Value)
 			return
 		} else {
 			if !errors.Is(err, InvalidTicket) {
-				LOG.Warnf(store.R.Context(), "validate ticket granting ticket error: %v", err)
+				LOG.Warnf(store.R.Context(), "validate ticket error: %v", err)
 			}
 			cookie.MaxAge = -1
 			http.SetCookie(store.W, cookie)
@@ -89,10 +69,6 @@ func loginPageHandler(store *httpd.Store) {
 func loginCheckHandler(store *httpd.Store) {
 	username := store.R.FormValue("username")
 	password := store.R.FormValue("password")
-	maxAge := 0
-	if store.R.FormValue("rememberMe") == "on" {
-		maxAge = TicketGrantingTicketTTL
-	}
 	if username == "" || password == "" {
 		http.Error(store.W, "username or password is empty", http.StatusBadRequest)
 		return
@@ -106,80 +82,81 @@ func loginCheckHandler(store *httpd.Store) {
 		return
 	}
 
-	tgt, err := TP.GetTicketGrantingTicket(store.R.Context(), user)
+	tgt, err := TP.GenerateTicketGrantingTicket(store.R.Context(), username)
 	if err != nil {
-		LOG.Error(store.R.Context(), "get ticket granting ticket error", logger.Error(err))
-		store.Error500("get ticket granting ticket error")
+		LOG.Error(store.R.Context(), "generate ticket granting ticket error", logger.Error(err))
+		store.Error500("generate ticket granting ticket error")
 		return
 	}
 	cookie := &http.Cookie{
 		Name:     TicketGrantingCookieName,
 		Value:    tgt,
 		Path:     "/cas",
-		MaxAge:   maxAge,
 		HttpOnly: true,
 	}
 	http.SetCookie(store.W, cookie)
 
+	loginSuccessPageOrRedirectToService(store, user, tgt)
+}
+
+func loginSuccessPageOrRedirectToService(store *httpd.Store, user *User, tgt string) {
 	service := store.R.URL.Query().Get("service")
 	if service == "" {
-		store.Respond200([]byte(`<body><pre>` +
-			html.EscapeString(username) + ` login successful, ` +
-			`click <a href="/cas/logout">here</a> to logout.` +
-			`</pre></body>`))
+		store.Respond200([]byte(`<body><pre>` + html.EscapeString(user.Username) + ` login successful, click <a href="/cas/logout">here</a> to logout.</pre></body>`))
 		return
 	}
 
-	ticket, err := TP.GetServiceTicket(store.R.Context(), user)
+	st, err := TP.GenerateServiceTicket(store.R.Context(), user.Username)
 	if err != nil {
-		LOG.Error(store.R.Context(), "get service ticket error", logger.Error(err))
-		store.Error500("get service ticket error")
+		LOG.Error(store.R.Context(), "generate service ticket error", logger.Error(err))
+		store.Error500("generate service ticket error")
 		return
 	}
+	if err = TP.BindTicketToGroup(store.R.Context(), tgt, st); err != nil {
+		LOG.Warnf(store.R.Context(), "bind ticket to group error: %v", err)
+	}
 
-	TP.CreateTicketBinding(store.R.Context(), tgt, ticket)
-	query := url.Values{"ticket": {string(ticket)}}
+	query := url.Values{"ticket": {st}}
 	store.Redirect(http.StatusFound, service+"?"+query.Encode())
 }
 
 func logoutHandler(store *httpd.Store) {
 	if cookie, err := store.R.Cookie(TicketGrantingCookieName); err == nil {
-		if err = TP.DeleteTicketGrantingTicket(store.R.Context(), cookie.Value); err != nil {
-			LOG.Warnf(store.R.Context(), "delete ticket granting ticket error: %v", err)
+		_, err = TP.DeleteTicket(store.R.Context(), cookie.Value)
+		if err != nil && !errors.Is(err, InvalidTicket) {
+			LOG.Warnf(store.R.Context(), "delete ticket error: %v", err)
 		}
 		cookie.MaxAge = -1
+		cookie.Value = ""
 		http.SetCookie(store.W, cookie)
 
-		sts := TP.DeleteBindings(store.R.Context(), cookie.Value)
+		sts := TP.DeleteTicketGroup(store.R.Context(), cookie.Value)
 		for _, st := range sts {
-			if err = TP.DeleteServiceTicket(store.R.Context(), st); err != nil {
-				LOG.Warnf(store.R.Context(), "delete service ticket error: %v", err)
+			user, err := TP.DeleteTicket(store.R.Context(), st)
+			if err != nil && !errors.Is(err, InvalidTicket) {
+				LOG.Warnf(store.R.Context(), "delete ticket error: %v", err)
 			}
-			go asyncLogout("TODO", st)
+			sendLogoutRequest(store.R.Context(), user.Username, st)
 		}
 	}
 	service := store.R.URL.Query().Get("service")
 	if service == "" {
-		store.Respond200([]byte(`<body><pre>` +
-			`logout successful, ` +
-			`click <a href="/cas/login">here</a> to login.` +
-			`</pre></body>`))
+		store.Respond200([]byte(`<body><pre>logout successful, click <a href="/cas/login">here</a> to login.</pre></body>`))
 		return
 	}
 	store.Redirect(http.StatusFound, service)
 }
 
-func asyncLogout(username, sessionIndex string) {
-	ctx := context.TODO()
+func sendLogoutRequest(ctx context.Context, username, sessionIndex string) {
 	logoutReqData, err := encodeSingleLogoutRequest(username, sessionIndex)
 	if err != nil {
-		LOG.Warn(ctx, "encode single logout request error", logger.Error(err))
+		LOG.Warnf(ctx, "encode single logout request error: %v", err)
 		return
 	}
 	values := url.Values{"logoutRequest": {string(logoutReqData)}}
 	resp, err := http.PostForm(CFG.CasClientLogoutUrl, values)
 	if err != nil {
-		LOG.Warn(ctx, "post single logout request error", logger.Error(err))
+		LOG.Warnf(ctx, "post single logout request error: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -200,10 +177,10 @@ func validateHandler(store *httpd.Store) {
 		return
 	}
 
-	user, err := TP.ValidateServiceTicket(store.R.Context(), ticket)
+	user, err := TP.ValidateTicket(store.R.Context(), ticket, true)
 	if err != nil {
 		if !errors.Is(err, InvalidTicket) {
-			LOG.Warnf(store.R.Context(), "validate service ticket error: %v", err)
+			LOG.Warnf(store.R.Context(), "validate ticket error: %v", err)
 		}
 		store.Respond200([]byte("no\n"))
 		return
@@ -221,10 +198,10 @@ func serviceValidateHandler(store *httpd.Store) {
 	}
 
 	var data []byte
-	user, err := TP.ValidateServiceTicket(store.R.Context(), ticket)
+	user, err := TP.ValidateTicket(store.R.Context(), ticket, true)
 	if err != nil {
 		if !errors.Is(err, InvalidTicket) {
-			LOG.Warnf(store.R.Context(), "validate service ticket error: %v", err)
+			LOG.Warnf(store.R.Context(), "validate ticket error: %v", err)
 		}
 		data, err = encodeServiceResponseFailure("INVALID_TICKET", "Ticket "+ticket+" not recognized", format)
 	} else {
