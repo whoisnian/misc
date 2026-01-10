@@ -28,15 +28,26 @@ func NewStaticUserProvider() *StaticUserProvider {
 	return &StaticUserProvider{userMap: userMap}
 }
 
-func (p *StaticUserProvider) ValidateUser(_ context.Context, username, password string) (User, error) {
+func (p *StaticUserProvider) FindUser(_ context.Context, username string) (*User, error) {
+	if u, exists := p.userMap[username]; exists {
+		return &User{
+			Username: u.username,
+			Mail:     u.mail,
+			Mobile:   u.mobile,
+		}, nil
+	}
+	return nil, UserNotFoundError
+}
+
+func (p *StaticUserProvider) ValidateUser(_ context.Context, username, password string) (*User, error) {
 	if u, exists := p.userMap[username]; exists {
 		if u.password == password {
-			return User{
+			return &User{
 				Username: u.username,
 				Mail:     u.mail,
 				Mobile:   u.mobile,
 			}, nil
 		}
 	}
-	return User{}, InvalidUsernameOrPasswordError
+	return nil, InvalidUsernameOrPasswordError
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -14,6 +15,7 @@ type LdapUserProvider struct {
 	bindPass     string
 	baseDN       string
 	searchFilter string
+	userCache    *sync.Map
 }
 
 func NewLdapUserProvider(serverUrl, bindDN, bindPass, baseDN, searchFilter string) *LdapUserProvider {
@@ -23,18 +25,19 @@ func NewLdapUserProvider(serverUrl, bindDN, bindPass, baseDN, searchFilter strin
 		bindPass:     bindPass,
 		baseDN:       baseDN,
 		searchFilter: searchFilter,
+		userCache:    new(sync.Map),
 	}
 }
 
-func (p *LdapUserProvider) ValidateUser(ctx context.Context, username, password string) (User, error) {
+func (p *LdapUserProvider) connectBindSearch(username string) (*ldap.Conn, []*ldap.Entry, error) {
 	conn, err := ldap.DialURL(p.serverUrl)
 	if err != nil {
-		return User{}, err
+		return nil, nil, err
 	}
-	defer conn.Close()
 
 	if err = conn.Bind(p.bindDN, p.bindPass); err != nil {
-		return User{}, err
+		conn.Close()
+		return nil, nil, err
 	}
 
 	searchDN := fmt.Sprintf(p.searchFilter, ldap.EscapeFilter(username))
@@ -45,21 +48,63 @@ func (p *LdapUserProvider) ValidateUser(ctx context.Context, username, password 
 	)
 	searchRes, err := conn.Search(searchReq)
 	if err != nil {
-		return User{}, err
+		conn.Close()
+		return nil, nil, err
 	}
-	if len(searchRes.Entries) < 1 {
-		return User{}, InvalidUsernameOrPasswordError
-	} else if len(searchRes.Entries) > 1 {
-		return User{}, errors.New("too many entries in search result")
+	return conn, searchRes.Entries, nil
+}
+
+func (p *LdapUserProvider) FindUser(_ context.Context, username string) (*User, error) {
+	if val, ok := p.userCache.Load(username); ok {
+		user := val.(User)
+		return &user, nil
+	}
+	conn, entries, err := p.connectBindSearch(username)
+	if err != nil {
+		return nil, err
+	}
+	conn.Close()
+
+	if len(entries) < 1 {
+		return nil, UserNotFoundError
+	} else if len(entries) > 1 {
+		return nil, errors.New("too many entries in search result")
 	}
 
-	err = conn.Bind(searchRes.Entries[0].DN, password)
-	if err != nil {
-		return User{}, err
-	}
-	return User{
+	user := User{
 		Username: username,
-		Mail:     searchRes.Entries[0].GetAttributeValue("mail"),
-		Mobile:   searchRes.Entries[0].GetAttributeValue("mobile"),
-	}, nil
+		Mail:     entries[0].GetAttributeValue("mail"),
+		Mobile:   entries[0].GetAttributeValue("mobile"),
+	}
+	p.userCache.Store(username, user)
+	return &user, nil
+}
+
+func (p *LdapUserProvider) ValidateUser(ctx context.Context, username, password string) (*User, error) {
+	conn, entries, err := p.connectBindSearch(username)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if len(entries) < 1 {
+		return nil, InvalidUsernameOrPasswordError
+	} else if len(entries) > 1 {
+		return nil, errors.New("too many entries in search result")
+	}
+
+	if err = conn.Bind(entries[0].DN, password); err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+			return nil, InvalidUsernameOrPasswordError
+		}
+		return nil, err
+	}
+
+	user := User{
+		Username: username,
+		Mail:     entries[0].GetAttributeValue("mail"),
+		Mobile:   entries[0].GetAttributeValue("mobile"),
+	}
+	p.userCache.Store(username, user)
+	return &user, nil
 }

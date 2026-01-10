@@ -11,10 +11,14 @@ type User struct {
 	Mobile   string
 }
 
-var InvalidUsernameOrPasswordError = errors.New("invalid username or password")
+var (
+	UserNotFoundError              = errors.New("user not found")
+	InvalidUsernameOrPasswordError = errors.New("invalid username or password")
+)
 
 type UserProvider interface {
-	ValidateUser(ctx context.Context, username, password string) (User, error)
+	FindUser(ctx context.Context, username string) (*User, error)
+	ValidateUser(ctx context.Context, username, password string) (*User, error)
 }
 
 var UP UserProvider
