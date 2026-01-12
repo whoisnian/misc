@@ -122,17 +122,18 @@ func loginSuccessPageOrRedirectToService(store *httpd.Store, user *User, tgt str
 
 func logoutHandler(store *httpd.Store) {
 	if cookie, err := store.R.Cookie(TicketGrantingCookieName); err == nil {
-		_, err = TP.DeleteTicket(store.R.Context(), cookie.Value)
+		user, err := TP.DeleteTicket(store.R.Context(), cookie.Value)
 		if err != nil && !errors.Is(err, InvalidTicket) {
 			LOG.Warnf(store.R.Context(), "delete ticket error: %v", err)
 		}
-		cookie.MaxAge = -1
+		tgt := cookie.Value
 		cookie.Value = ""
+		cookie.MaxAge = -1
 		http.SetCookie(store.W, cookie)
 
-		sts := TP.DeleteTicketGroup(store.R.Context(), cookie.Value)
+		sts := TP.DeleteTicketGroup(store.R.Context(), tgt)
 		for _, st := range sts {
-			user, err := TP.DeleteTicket(store.R.Context(), st)
+			_, err = TP.DeleteTicket(store.R.Context(), st)
 			if err != nil && !errors.Is(err, InvalidTicket) {
 				LOG.Warnf(store.R.Context(), "delete ticket error: %v", err)
 			}
