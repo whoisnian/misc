@@ -5,6 +5,7 @@ A collection of small Go utilities.
 * [**ksplit**](cmd/ksplit): Split Kustomize build output.
 * [**term**](cmd/term): A versatile terminal utility.
 * [**mockcas**](cmd/mockcas): Mock CAS server and client for testing CAS Protocol 3.0.
+* [**cgstats**](cmd/cgstats): Collect and display cgroup statistics of a process or docker containers.
 * [**ds18b20-a103**](cmd/ds18b20-a103): Read temperature from a DS18B20 sensor.
 * [**thermocouple-k-a112**](cmd/thermocouple-k-a112): Read temperature from a K-type thermocouple module.
 * [**relay-lcus-1**](cmd/relay-lcus-1): Control a single-channel LCUS relay.
