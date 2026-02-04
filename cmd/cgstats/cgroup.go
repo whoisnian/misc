@@ -19,61 +19,91 @@ var (
 
 // https://docs.docker.com/engine/containers/runmetrics/
 type CgroupState struct {
+	Path string
 	Time time.Time
 	Cpu  int64
 	Mem  int64
 }
 
-// cgroupPath example: "/system.slice/sshd.service"
-func CollectCgroupState(ctx context.Context, fcache *FileCache, cgroupPath string) (res CgroupState, err error) {
-	res.Time = time.Now()
-
-	// cpu
-	buf, err := fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, cgroupPath, "cpu.stat"))
+// https://github.com/containerd/cgroups/blob/31da8b0f7d670716395ff0c21f6d764f62bb7352/cgroup2/manager.go#L601
+func (s *CgroupState) CollectCpuUsageUsec(fcache *FileCache) error {
+	buf, err := fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, s.Path, "cpu.stat"))
 	if err != nil {
-		return res, err
+		return err
 	}
 	matched := reCpuUsageUsec.FindSubmatch(buf)
 	if len(matched) < 2 {
-		return res, fmt.Errorf("cpu_usage_usec not found")
+		return fmt.Errorf("cpu_usage_usec not found")
 	}
-	res.Cpu, err = strconv.ParseInt(string(matched[1]), 10, 64)
-	if err != nil {
-		return res, err
-	}
+	s.Cpu, err = strconv.ParseInt(string(matched[1]), 10, 64)
+	return err
+}
 
-	// mem
-	buf, err = fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, cgroupPath, "memory.current"))
+// https://github.com/containerd/cgroups/blob/31da8b0f7d670716395ff0c21f6d764f62bb7352/cgroup2/manager.go#L622
+// https://github.com/docker/cli/blob/769e75a0eeeadec99f3f9c6b8b9844fe7a9701e0/cli/command/container/stats_helpers.go#L238
+// On cgroup v2 host, the result is `mem.Usage - mem.Stats["inactive_file"]`
+func (s *CgroupState) CollectMemUsageBytes(fcache *FileCache) error {
+	buf, err := fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, s.Path, "memory.current"))
 	if err != nil {
-		return res, err
+		return err
 	}
-	matched = reMemCurrent.FindSubmatch(buf)
+	matched := reMemCurrent.FindSubmatch(buf)
 	if len(matched) < 2 {
-		return res, fmt.Errorf("mem_current not found")
+		return fmt.Errorf("mem_current not found")
 	}
-	res.Mem, err = strconv.ParseInt(string(matched[1]), 10, 64)
+	s.Mem, err = strconv.ParseInt(string(matched[1]), 10, 64)
 	if err != nil {
-		return res, err
+		return err
 	}
-	buf, err = fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, cgroupPath, "memory.stat"))
+	buf, err = fcache.SeekAndReadAll(filepath.Join(cgroupPrefix, s.Path, "memory.stat"))
 	if err != nil {
-		return res, err
+		return err
 	}
 	matched = reMemInactiveFile.FindSubmatch(buf)
 	if len(matched) < 2 {
-		return res, fmt.Errorf("mem_inactive_file not found")
+		return fmt.Errorf("mem_inactive_file not found")
 	}
 	inactive, err := strconv.ParseInt(string(matched[1]), 10, 64)
 	if err != nil {
-		return res, err
+		return err
 	}
-	res.Mem -= inactive
+	s.Mem -= inactive
+	return nil
+}
 
-	return res, err
+// cgroupPath example: "/system.slice/sshd.service"
+func CollectCgroupState(ctx context.Context, fcache *FileCache, cgroupPath string) (CgroupState, error) {
+	state := CgroupState{
+		Path: cgroupPath,
+		Time: time.Now(),
+	}
+	if err := state.CollectCpuUsageUsec(fcache); err != nil {
+		return state, err
+	}
+	if err := state.CollectMemUsageBytes(fcache); err != nil {
+		return state, err
+	}
+	return state, nil
 }
 
 func SleepWithLog(ctx context.Context, seconds int) {
-	d := time.Duration(seconds) * time.Second
-	LOG.Infof(ctx, "sleeping for %v...", d)
-	time.Sleep(d)
+	var interval int
+	if seconds <= 5 {
+		interval = 1
+	} else if seconds <= 20 {
+		interval = 2
+	} else {
+		interval = seconds / 10
+		if seconds%10 != 0 {
+			interval++
+		}
+	}
+
+	sum := 0
+	LOG.Infof(ctx, "waiting %ds...", seconds)
+	for ; sum+interval < seconds; sum += interval {
+		time.Sleep(time.Duration(interval) * time.Second)
+		LOG.Infof(ctx, "waiting %ds...", seconds-sum-interval)
+	}
+	time.Sleep(time.Duration(seconds-sum) * time.Second)
 }
