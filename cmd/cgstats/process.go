@@ -48,6 +48,7 @@ func ShowProcessStatsByCmd(ctx context.Context, fcache *FileCache, command strin
 	} else if pid == 0 {
 		return fmt.Errorf("no process found for command %s", command)
 	}
+	LOG.Debugf(ctx, "found pid %d for command %s", pid, command)
 	return ShowProcessStatsByPid(ctx, fcache, pid)
 }
 
@@ -60,6 +61,7 @@ func findPidByCmd(ctx context.Context, command string) (int, error) {
 	}
 	defer proc.Close()
 
+	self := strconv.Itoa(os.Getpid())
 	names, err := proc.Readdirnames(-1)
 	if err != nil {
 		return 0, err
@@ -68,7 +70,7 @@ func findPidByCmd(ctx context.Context, command string) (int, error) {
 	var result string = "0"
 	var oldest uint64 = math.MaxUint64
 	for _, name := range names {
-		if !isNumericPid(name) {
+		if !isNumericPid(name) || name == self {
 			continue
 		}
 
