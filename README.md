@@ -9,6 +9,7 @@ A collection of small Go utilities.
 * [**ds18b20-a103**](cmd/ds18b20-a103): Read temperature from a DS18B20 sensor.
 * [**thermocouple-k-a112**](cmd/thermocouple-k-a112): Read temperature from a K-type thermocouple module.
 * [**relay-lcus-1**](cmd/relay-lcus-1): Control a single-channel LCUS relay.
+* [**usb-hid-keyboard**](cmd/usb-hid-keyboard): USB HID Keyboard emulator with ch9329 or kcom3 serial device.
 
 ## build and run
 ```sh
