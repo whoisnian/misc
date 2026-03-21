@@ -1,0 +1,11 @@
+[project]
+name = "inkako"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "bleak>=2.1.1",
+    "numpy>=2.4.3",
+    "pillow>=12.1.1",
+]
