@@ -7,6 +7,7 @@ A collection of small Go utilities.
 * [**mockcas**](cmd/mockcas): Mock CAS server and client for testing CAS Protocol 3.0.
 * [**cgstats**](cmd/cgstats): Collect and display cgroup statistics of a process or docker containers.
 * [**inkako**](cmd/inkako): Convert image and transfer to Nubia Electronic Badge Ink Screen via Bluetooth.
+* [**static-fallback**](cmd/static-fallback): Static file server with suffix-based fallback matching.
 * [**ds18b20-a103**](cmd/ds18b20-a103): Read temperature from a DS18B20 sensor.
 * [**thermocouple-k-a112**](cmd/thermocouple-k-a112): Read temperature from a K-type thermocouple module.
 * [**relay-lcus-1**](cmd/relay-lcus-1): Control a single-channel LCUS relay.

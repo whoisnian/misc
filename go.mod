@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
 	github.com/go-ldap/ldap/v3 v3.4.12
+	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/whoisnian/glb v1.6.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.37.0
@@ -28,6 +29,7 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
