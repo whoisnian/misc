@@ -14,5 +14,5 @@ go run ./cmd/static-fallback -d -l 0.0.0.0:8080 -b ./workspace -f ./fallback
   -d      bool     Enable debug output [CFG_DEBUG]
   -l      string   Server listen addr [CFG_LISTEN_ADDR] (default "0.0.0.0:54321")
   -b      string   Base directory to serve files from [CFG_BASE_DIR] (default "base")
-  -f      string   Fallback directory to serve files if not found [CFG_FALLBACK_DIR]
+  -f      string   Fallback directories to serve files if not found (comma-separated) [CFG_FALLBACKS]
 ```

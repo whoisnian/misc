@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -21,10 +23,10 @@ import (
 )
 
 var CFG struct {
-	Debug       bool   `flag:"d,false,Enable debug output"`
-	ListenAddr  string `flag:"l,0.0.0.0:54321,Server listen addr"`
-	BaseDir     string `flag:"b,base,Base directory to serve files from"`
-	FallbackDir string `flag:"f,,Fallback directory to serve files if not found"`
+	Debug      bool   `flag:"d,false,Enable debug output"`
+	ListenAddr string `flag:"l,0.0.0.0:54321,Server listen addr"`
+	BaseDir    string `flag:"b,base,Base directory to serve files from"`
+	Fallbacks  string `flag:"f,,Fallback directories to serve files if not found (comma-separated)"`
 }
 
 var LOG *logger.Logger
@@ -48,11 +50,24 @@ func setupConfigAndLogger(_ context.Context) {
 var TREE *iradix.Tree[string]
 
 func setupFallbackTree(ctx context.Context) {
-	if CFG.FallbackDir == "" {
+	if CFG.Fallbacks == "" {
 		return
 	}
 
 	TREE = iradix.New[string]()
+	for _, dir := range slices.Backward(strings.Split(CFG.Fallbacks, ",")) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		LOG.Debugf(ctx, "walk fallback directory: %s", dir)
+		if err := walkDirAndBuildTree(ctx, dir); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func walkDirAndBuildTree(ctx context.Context, root string) error {
 	walkDirFunc := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -61,7 +76,7 @@ func setupFallbackTree(ctx context.Context) {
 			return nil
 		}
 
-		relPath, err := filepath.Rel(CFG.FallbackDir, path)
+		relPath, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
@@ -71,17 +86,12 @@ func setupFallbackTree(ctx context.Context) {
 		TREE, _, _ = TREE.Insert(buf, path)
 		return nil
 	}
-	err := filepath.WalkDir(CFG.FallbackDir, walkDirFunc)
-	if err != nil {
-		panic(err)
-	}
+	return filepath.WalkDir(root, walkDirFunc)
 }
 
 func reverseBytesFromString(s string) []byte {
-	buf := make([]byte, len(s))
-	for i := range s {
-		buf[len(s)-1-i] = s[i]
-	}
+	buf := []byte(s)
+	slices.Reverse(buf)
 	return buf
 }
 
