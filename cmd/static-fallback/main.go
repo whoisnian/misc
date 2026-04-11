@@ -3,16 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"time"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/whoisnian/glb/ansi"
 	"github.com/whoisnian/glb/config"
 	"github.com/whoisnian/glb/httpd"
@@ -27,6 +24,7 @@ var CFG struct {
 	ListenAddr string `flag:"l,0.0.0.0:54321,Server listen addr"`
 	BaseDir    string `flag:"b,base,Base directory to serve files from"`
 	Fallbacks  string `flag:"f,,Fallback directories to serve files if not found (comma-separated)"`
+	Live       bool   `flag:"live,false,Enable fallback files live rebuild (at most once per 60s)"`
 }
 
 var LOG *logger.Logger
@@ -47,52 +45,22 @@ func setupConfigAndLogger(_ context.Context) {
 	}))
 }
 
-var TREE *iradix.Tree[string]
+var (
+	FALLBACK    *fallbackFiles
+	rebuildMux  sync.Mutex
+	lastRebuild time.Time
+)
 
-func setupFallbackTree(ctx context.Context) {
+func setupFallbackFiles(ctx context.Context) {
 	if CFG.Fallbacks == "" {
 		return
 	}
-
-	TREE = iradix.New[string]()
-	for _, dir := range slices.Backward(strings.Split(CFG.Fallbacks, ",")) {
-		dir = strings.TrimSpace(dir)
-		if dir == "" {
-			continue
-		}
-		LOG.Debugf(ctx, "walk fallback directory: %s", dir)
-		if err := walkDirAndBuildTree(ctx, dir); err != nil {
-			panic(err)
-		}
+	FALLBACK = NewFallbackFiles(strings.Split(CFG.Fallbacks, ","))
+	if err := FALLBACK.Rebuild(ctx); err != nil {
+		panic(err)
 	}
-}
-
-func walkDirAndBuildTree(ctx context.Context, root string) error {
-	walkDirFunc := func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-
-		buf := reverseBytesFromString(relPath)
-		LOG.Debugf(ctx, "discover %s as %s", path, buf)
-		TREE, _, _ = TREE.Insert(buf, path)
-		return nil
-	}
-	return filepath.WalkDir(root, walkDirFunc)
-}
-
-func reverseBytesFromString(s string) []byte {
-	buf := []byte(s)
-	slices.Reverse(buf)
-	return buf
+	LOG.Infof(ctx, "build fallback files with %d entries, live mode: %t", FALLBACK.Size(), CFG.Live)
+	lastRebuild = time.Now()
 }
 
 func main() {
@@ -100,10 +68,7 @@ func main() {
 	setupConfigAndLogger(ctx)
 	LOG.Debugf(ctx, "use config: %+v", CFG)
 
-	setupFallbackTree(ctx)
-	if TREE != nil {
-		LOG.Warnf(ctx, "build fallback tree with %d entries, restart needed if fallback files change", TREE.Len())
-	}
+	setupFallbackFiles(ctx)
 
 	mux := httpd.NewMux()
 	mux.HandleMiddleware(LOG.NewMiddleware())
@@ -140,12 +105,28 @@ func indexHandler(store *httpd.Store) {
 	_, err := os.Stat(fpath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if TREE != nil {
-				buf := reverseBytesFromString(fpath)
-				if key, val, ok := TREE.Root().LongestPrefix(buf); ok {
+			if FALLBACK != nil {
+				if key, val, ok := FALLBACK.LongestSuffix(fpath); ok {
 					LOG.Debugf(store.R.Context(), "fallback %s matches %s", val, key)
 					http.ServeFile(store.W, store.R, val)
 					return
+				}
+
+				if CFG.Live {
+					rebuildMux.Lock()
+					if time.Since(lastRebuild) > 60*time.Second {
+						lastRebuild = time.Now()
+						LOG.Warnf(store.R.Context(), "file not found, trigger live rebuild")
+						if err = FALLBACK.Rebuild(store.R.Context()); err != nil {
+							LOG.Errorf(store.R.Context(), "live rebuild failed: %v", err)
+						}
+					}
+					rebuildMux.Unlock()
+					if key, val, ok := FALLBACK.LongestSuffix(fpath); ok {
+						LOG.Debugf(store.R.Context(), "fallback %s matches %s", val, key)
+						http.ServeFile(store.W, store.R, val)
+						return
+					}
 				}
 			}
 			store.Error404("file not found")
