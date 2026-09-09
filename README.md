@@ -12,6 +12,7 @@ A collection of small Go utilities.
 * [**thermocouple-k-a112**](cmd/thermocouple-k-a112): Read temperature from a K-type thermocouple module.
 * [**relay-lcus-1**](cmd/relay-lcus-1): Control a single-channel LCUS relay.
 * [**usb-hid-keyboard**](cmd/usb-hid-keyboard): USB HID Keyboard emulator with ch9329 or kcom3 serial device.
+* [**ch341-oled**](cmd/ch341-oled): Drive an SSD1306 or SH1106 OLED with a CH341 USB to I2C adapter.
 
 ## build and run
 ```sh
