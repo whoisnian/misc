@@ -56,3 +56,12 @@ sudo go run ./cmd/ch341-oled -p off
   -t          float64  Duration in seconds of the 'sweep' pattern [CFG_DURATION] (default 6)
   -reconnect  bool     Rebind the kernel driver on exit [CFG_RECONNECT]
 ```
+
+## prompt history
+```md
+通过 USB 转 IIC 模块连接了一个 0.91 inch 的 OLED 屏幕，已知 USB 转 IIC 模块使用 CH341 芯片，OLED 屏幕可能使用 SSD1306 驱动，测试能否正常显示
+显示效果如图 ~/Downloads/2026-09-10-01-54-16-881.jpg，推测分辨率为 128x32
+还有另外两款 OLED 屏幕，一款为 0.96 inch，另一款为 1.3 inch，能否更换连接后再次测试
+显示效果如图 ~/Downloads/2026-09-10-02-07-38-467.jpg 和 ~/Downloads/2026-09-10-02-10-09-504.jpg，SH1106 正常工作
+已手动测试完毕，三块屏幕均正常工作
+```
