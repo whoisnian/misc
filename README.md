@@ -13,6 +13,7 @@ A collection of small Go utilities.
 * [**relay-lcus-1**](cmd/relay-lcus-1): Control a single-channel LCUS relay.
 * [**usb-hid-keyboard**](cmd/usb-hid-keyboard): USB HID Keyboard emulator with ch9329 or kcom3 serial device.
 * [**ch341-oled**](cmd/ch341-oled): Drive an SSD1306 or SH1106 OLED with a CH341 USB to I2C adapter.
+* [**bt-hid-relay**](cmd/bt-hid-relay): Share the local keyboard and mouse with another machine as a Bluetooth HID device.
 
 ## build and run
 ```sh
