@@ -14,6 +14,7 @@ A collection of small Go utilities.
 * [**usb-hid-keyboard**](cmd/usb-hid-keyboard): USB HID Keyboard emulator with ch9329 or kcom3 serial device.
 * [**ch341-oled**](cmd/ch341-oled): Drive an SSD1306 or SH1106 OLED with a CH341 USB to I2C adapter.
 * [**bt-hid-relay**](cmd/bt-hid-relay): Share the local keyboard and mouse with another machine as a Bluetooth HID device.
+* [**reqdump**](cmd/reqdump): Echo and record HTTP requests as received, with TLS and HTTP/2 client fingerprints.
 
 ## build and run
 ```sh
