@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	evSyn     = 0
-	evKey     = 1
-	evRel     = 2
-	synReport = 0
+	evSyn      = 0
+	evKey      = 1
+	evRel      = 2
+	synReport  = 0
+	synDropped = 3
 
 	relX      = 0
 	relY      = 1
@@ -28,10 +29,19 @@ const (
 	btnExtra = 0x114
 
 	eviocgrab = 0x40044590 // _IOW('E', 0x90, int)
+	keyCnt    = 0x300      // KEY_CNT
 )
 
 // eviocgname returns EVIOCGNAME(n): _IOC(_IOC_READ, 'E', 0x06, n)
 func eviocgname(n int) uint { return 0x80004506 | uint(n)<<16 }
+
+// eviocgkey returns EVIOCGKEY(n): _IOC(_IOC_READ, 'E', 0x18, n)
+func eviocgkey(n int) uint { return 0x80004518 | uint(n)<<16 }
+
+// keyBits is the EVIOCGKEY bitmap of keys and buttons held down, indexed by evdev code.
+type keyBits [keyCnt / 8]byte
+
+func (k *keyBits) held(code uint16) bool { return k[code/8]>>(code%8)&1 != 0 }
 
 // struct input_event: struct timeval + __u16 type + __u16 code + __s32 value
 var eventSize = int(unsafe.Sizeof(unix.Timeval{})) + 8
@@ -49,6 +59,7 @@ type InputDev struct {
 	forward bool // false: only watched for the toggle key, never grabbed or forwarded
 	f       *os.File
 	grabbed bool
+	dropped bool // SYN_DROPPED seen, skip events up to the next SYN_REPORT
 }
 
 func openInputDev(path string, forward bool) (*InputDev, error) {
@@ -63,7 +74,7 @@ func openInputDev(path string, forward bool) (*InputDev, error) {
 	}
 	d := &InputDev{path: path, real: real, forward: forward, f: os.NewFile(uintptr(fd), path)}
 	buf := make([]byte, 256)
-	if err := d.ioctl(eviocgname(len(buf)), uintptr(unsafe.Pointer(&buf[0]))); err != nil {
+	if err := d.ioctl(eviocgname(len(buf)), unsafe.Pointer(&buf[0])); err != nil {
 		d.f.Close()
 		return nil, fmt.Errorf("EVIOCGNAME: %w", err)
 	}
@@ -74,15 +85,21 @@ func openInputDev(path string, forward bool) (*InputDev, error) {
 	return d, nil
 }
 
-func (d *InputDev) ioctl(req uint, arg uintptr) error {
+// ioctl passes a pointer argument; the uintptr conversion must stay inside the Syscall call.
+func (d *InputDev) ioctl(req uint, arg unsafe.Pointer) error {
+	return d.control(func(fd uintptr) unix.Errno {
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, uintptr(req), uintptr(arg))
+		return errno
+	})
+}
+
+func (d *InputDev) control(fn func(fd uintptr) unix.Errno) error {
 	rc, err := d.f.SyscallConn()
 	if err != nil {
 		return err
 	}
 	var errno unix.Errno
-	if err := rc.Control(func(fd uintptr) {
-		_, _, errno = unix.Syscall(unix.SYS_IOCTL, fd, uintptr(req), arg)
-	}); err != nil {
+	if err := rc.Control(func(fd uintptr) { errno = fn(fd) }); err != nil {
 		return err
 	}
 	if errno != 0 {
@@ -100,11 +117,21 @@ func (d *InputDev) Grab(on bool) error {
 	if on {
 		arg = 1
 	}
-	if err := d.ioctl(eviocgrab, arg); err != nil {
+	if err := d.control(func(fd uintptr) unix.Errno {
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, eviocgrab, arg)
+		return errno
+	}); err != nil {
 		return err
 	}
 	d.grabbed = on
 	return nil
+}
+
+// Keys returns the keys and buttons currently held down on the device.
+func (d *InputDev) Keys() (keyBits, error) {
+	var k keyBits
+	err := d.ioctl(eviocgkey(len(k)), unsafe.Pointer(&k))
+	return k, err
 }
 
 // ReadEvents blocks until at least one event is available.

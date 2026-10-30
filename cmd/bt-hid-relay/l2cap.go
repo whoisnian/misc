@@ -5,10 +5,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// writeTimeout bounds a write to a stalled link; it is longer than the 1 s SSR latency in the SDP record.
+const writeTimeout = 2 * time.Second
 
 type bdaddr [6]byte
 
@@ -19,9 +24,11 @@ func parseBDAddr(s string) (bdaddr, error) {
 		return a, fmt.Errorf("invalid bluetooth address %q", s)
 	}
 	for i, p := range parts {
-		if _, err := fmt.Sscanf(p, "%02X", &a[i]); err != nil || len(p) != 2 {
+		n, err := strconv.ParseUint(p, 16, 8)
+		if err != nil || len(p) != 2 {
 			return a, fmt.Errorf("invalid bluetooth address %q", s)
 		}
+		a[i] = byte(n)
 	}
 	return a, nil
 }
@@ -68,9 +75,16 @@ func wrapL2CAP(fd int, peer bdaddr) (*l2capConn, error) {
 	return &l2capConn{f: os.NewFile(uintptr(fd), "l2cap:"+peer.String()), peer: peer}, nil
 }
 
-func (c *l2capConn) Read(buf []byte) (int, error)  { return c.f.Read(buf) }
-func (c *l2capConn) Write(pkt []byte) (int, error) { return c.f.Write(pkt) }
-func (c *l2capConn) Close() error                  { return c.f.Close() }
+func (c *l2capConn) Read(buf []byte) (int, error) { return c.f.Read(buf) }
+func (c *l2capConn) Close() error                 { return c.f.Close() }
+
+// Write runs with Relay.mu held, so a stalled link has to fail instead of blocking input handling.
+func (c *l2capConn) Write(pkt []byte) (int, error) {
+	if err := c.f.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return 0, err
+	}
+	return c.f.Write(pkt)
+}
 
 // listenL2CAP binds a PSM on the local adapter. PSMs below 0x1001 need CAP_NET_BIND_SERVICE.
 func listenL2CAP(local bdaddr, psm uint16) (int, error) {

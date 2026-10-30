@@ -41,15 +41,33 @@ DeviceID = bluetooth:1d6b:0246:0537
 AutoEnable = true
 `
 
-// agent implements org.bluez.Agent1 and accepts everything; pairing is only possible while -pair is open.
-type agent struct{ ctx context.Context }
+// agent implements org.bluez.Agent1 and accepts every pairing request while -pair is open.
+type agent struct {
+	ctx     context.Context
+	canPair func() bool
+}
+
+// allow reports whether a pairing request may proceed, as the error to hand back to BlueZ.
+func (a *agent) allow(dev dbus.ObjectPath, what string) *dbus.Error {
+	if !a.canPair() {
+		LOG.Warnf(a.ctx, "%s for %s: rejected, pairing window is closed", what, deviceMAC(dev))
+		return dbus.NewError("org.bluez.Error.Rejected", nil)
+	}
+	LOG.Infof(a.ctx, "%s for %s: accepted", what, deviceMAC(dev))
+	return nil
+}
 
 func (a *agent) Release() *dbus.Error { return nil }
 func (a *agent) Cancel() *dbus.Error  { return nil }
 func (a *agent) RequestPinCode(dev dbus.ObjectPath) (string, *dbus.Error) {
+	if err := a.allow(dev, "pin code request"); err != nil {
+		return "", err
+	}
 	return "0000", nil
 }
-func (a *agent) RequestPasskey(dev dbus.ObjectPath) (uint32, *dbus.Error) { return 0, nil }
+func (a *agent) RequestPasskey(dev dbus.ObjectPath) (uint32, *dbus.Error) {
+	return 0, a.allow(dev, "passkey request")
+}
 func (a *agent) DisplayPinCode(dev dbus.ObjectPath, pin string) *dbus.Error {
 	LOG.Infof(a.ctx, "pin code %s for %s", pin, deviceMAC(dev))
 	return nil
@@ -59,12 +77,10 @@ func (a *agent) DisplayPasskey(dev dbus.ObjectPath, passkey uint32, entered uint
 	return nil
 }
 func (a *agent) RequestConfirmation(dev dbus.ObjectPath, passkey uint32) *dbus.Error {
-	LOG.Infof(a.ctx, "confirm passkey %06d for %s: accepted", passkey, deviceMAC(dev))
-	return nil
+	return a.allow(dev, fmt.Sprintf("confirm passkey %06d", passkey))
 }
 func (a *agent) RequestAuthorization(dev dbus.ObjectPath) *dbus.Error {
-	LOG.Infof(a.ctx, "authorize %s: accepted", deviceMAC(dev))
-	return nil
+	return a.allow(dev, "authorization")
 }
 func (a *agent) AuthorizeService(dev dbus.ObjectPath, uuid string) *dbus.Error {
 	LOG.Debugf(a.ctx, "authorize service %s for %s: accepted", uuid, deviceMAC(dev))
@@ -104,9 +120,24 @@ func connectBlueZ(ctx context.Context, wantAdapter string) (*bluez, error) {
 		return nil, fmt.Errorf("system bus: %w", err)
 	}
 	b := &bluez{ctx: ctx, conn: conn}
+	// bluetoothd owns org.bluez before it has finished probing the adapters
+	for attempt := 0; attempt < 25; attempt++ {
+		found, err := b.findAdapter(wantAdapter)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return b, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("bluetooth adapter %q not found", wantAdapter)
+}
+
+func (b *bluez) findAdapter(wantAdapter string) (bool, error) {
 	objs, err := b.managedObjects()
 	if err != nil {
-		return nil, fmt.Errorf("GetManagedObjects (is bluetoothd running?): %w", err)
+		return false, fmt.Errorf("GetManagedObjects (is bluetoothd running?): %w", err)
 	}
 	paths := make([]string, 0, len(objs))
 	for p := range objs {
@@ -120,12 +151,12 @@ func connectBlueZ(ctx context.Context, wantAdapter string) (*bluez, error) {
 		}
 		addr, err := parseBDAddr(ad["Address"].Value().(string))
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 		b.adapterPath, b.addr = dbus.ObjectPath(p), addr
-		return b, nil
+		return true, nil
 	}
-	return nil, fmt.Errorf("bluetooth adapter %q not found", wantAdapter)
+	return false, nil
 }
 
 func (b *bluez) managedObjects() (map[dbus.ObjectPath]map[string]map[string]dbus.Variant, error) {
@@ -157,8 +188,8 @@ func (b *bluez) pairedDevices() ([]bdaddr, error) {
 	return res, nil
 }
 
-func (b *bluez) registerAgent() error {
-	if err := b.conn.Export(&agent{ctx: b.ctx}, agentPath, "org.bluez.Agent1"); err != nil {
+func (b *bluez) registerAgent(canPair func() bool) error {
+	if err := b.conn.Export(&agent{ctx: b.ctx, canPair: canPair}, agentPath, "org.bluez.Agent1"); err != nil {
 		return err
 	}
 	mgr := b.conn.Object(bluezService, "/org/bluez")

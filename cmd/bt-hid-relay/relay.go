@@ -30,6 +30,8 @@ type Relay struct {
 	only       string
 	explicit   []string
 	test       bool
+	keepalive  time.Duration
+	heldKeys   func() keyBits // key state of the forwarded devices; caller holds mu
 
 	mu sync.Mutex
 
@@ -45,6 +47,7 @@ type Relay struct {
 	// input devices and HID state
 	devices    map[string]*InputDev // keyed by resolved path
 	forwarding bool
+	pendingOn  bool // switching to the host once the held keys are released
 	kbMods     byte
 	kbKeys     []byte
 	kbDirty    bool
@@ -59,8 +62,9 @@ type RelayOptions struct {
 	ToggleName string
 	Only       string   // "", "keyboard" or "mouse"
 	Devices    []string // explicit evdev paths, empty for auto discovery
-	Hosts      []bdaddr // reconnect targets, empty for every paired device
+	Hosts      []bdaddr // allowed hosts, empty for every paired device
 	Test       bool
+	Keepalive  time.Duration // 0 to disable
 }
 
 func NewRelay(ctx context.Context, bz *bluez, opt RelayOptions) *Relay {
@@ -73,6 +77,7 @@ func NewRelay(ctx context.Context, bz *bluez, opt RelayOptions) *Relay {
 		explicit:   opt.Devices,
 		hosts:      opt.Hosts,
 		test:       opt.Test,
+		keepalive:  opt.Keepalive,
 		retryDelay: retryMin,
 		devices:    map[string]*InputDev{},
 		lastReport: map[byte][]byte{
@@ -81,6 +86,7 @@ func NewRelay(ctx context.Context, bz *bluez, opt RelayOptions) *Relay {
 			ridConsumer: {ridConsumer, 0, 0},
 		},
 	}
+	r.heldKeys = r.readHeldKeys
 	return r
 }
 
@@ -114,13 +120,14 @@ func (r *Relay) Run() error {
 	if len(r.devices) == 0 {
 		LOG.Warnf(r.ctx, "no input device found under /dev/input/by-id, use -dev to specify one")
 	}
-	if len(r.explicit) == 0 {
-		go func() { // hotplug
-			for {
-				time.Sleep(5 * time.Second)
-				r.discoverDevices()
-			}
-		}()
+	go func() { // hotplug
+		for {
+			time.Sleep(5 * time.Second)
+			r.discoverDevices()
+		}
+	}()
+	if r.keepalive > 0 {
+		go r.keepaliveLoop()
 	}
 
 	r.mu.Lock()
@@ -239,7 +246,7 @@ func (r *Relay) dialOne(local, host bdaddr) bool {
 	intr, err := dialL2CAP(local, host, psmIntr)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.gen != gen { // control channel was replaced while we were dialing
+	if r.gen != gen || r.intr != nil { // the host took over or opened interrupt while we were dialing
 		if intr != nil {
 			intr.Close()
 		}
@@ -265,33 +272,51 @@ func (r *Relay) acceptLoop(lfd int, psm uint16) {
 			continue
 		}
 		r.mu.Lock()
+		if why := r.refuse(c.peer, psm); why != "" {
+			r.mu.Unlock()
+			LOG.Warnf(r.ctx, "ignoring psm %d connection from %s: %s", psm, c.peer, why)
+			c.Close()
+			continue
+		}
 		if psm == psmCtrl {
 			// a new control connection means the host started a fresh HID session
 			r.dropConnection("host opened a new session", false)
-		} else if r.ctrl == nil || r.peer != c.peer {
-			r.mu.Unlock()
-			LOG.Warnf(r.ctx, "ignoring interrupt connection from %s without a control channel", c.peer)
-			c.Close()
-			continue
 		}
 		r.attach(c, psm)
 		r.mu.Unlock()
 	}
 }
 
+// refuse returns why an inbound channel is not acceptable, empty if it is; caller holds r.mu.
+func (r *Relay) refuse(peer bdaddr, psm uint16) string {
+	switch {
+	case len(r.hosts) > 0 && !slices.Contains(r.hosts, peer):
+		return "not an allowed -host"
+	case psm == psmCtrl && r.connected() && r.peer != peer:
+		return "already connected to " + r.peer.String()
+	case psm == psmIntr && (r.ctrl == nil || r.peer != peer):
+		return "no control channel"
+	}
+	return ""
+}
+
 // ---------------------------------------------------------------- link management
 
 // attach installs a channel and starts its reader; caller holds r.mu. It returns the current generation.
 func (r *Relay) attach(c *l2capConn, psm uint16) uint64 {
+	wasConnected := r.connected()
 	r.peer = c.peer
 	if psm == psmCtrl {
 		r.ctrl = c
 		r.gen++
 	} else {
+		if r.intr != nil { // reopened by the host, the old reader exits once it is closed
+			r.intr.Close()
+		}
 		r.intr = c
 	}
 	go r.readLoop(c, psm)
-	if r.connected() {
+	if r.connected() && !wasConnected {
 		r.retryDelay = retryMin
 		LOG.Infof(r.ctx, "connected to host %s, press %s to switch input", c.peer, r.toggleName)
 		if r.test {
@@ -314,6 +339,7 @@ func (r *Relay) dropConnection(why string, reconnect bool) {
 	if had {
 		LOG.Infof(r.ctx, "disconnected from host %s: %s", r.peer, why)
 	}
+	r.pendingOn = false
 	if r.forwarding {
 		r.setForwarding(false, false)
 	}
@@ -422,6 +448,25 @@ func (r *Relay) sendReport(rid byte, body []byte) {
 	LOG.Debugf(r.ctx, "interrupt -> %s", hex.EncodeToString(pkt))
 }
 
+// keepaliveLoop keeps the link awake while forwarding. After an idle moment the USB adapter is
+// autosuspended (2 s by default) and the host may have put the link in sniff mode, and the first
+// reports sent into that state can get lost.
+func (r *Relay) keepaliveLoop() {
+	for range time.Tick(r.keepalive) {
+		r.mu.Lock()
+		r.sendKeepalive()
+		r.mu.Unlock()
+	}
+}
+
+// sendKeepalive repeats the keyboard state, which is a no-op for the host, unlike a zero mouse
+// move that may count as user activity; caller holds r.mu.
+func (r *Relay) sendKeepalive() {
+	if r.forwarding {
+		r.sendReport(ridKeyboard, r.lastReport[ridKeyboard][1:])
+	}
+}
+
 func (r *Relay) sendReleaseAll() {
 	r.sendReport(ridKeyboard, make([]byte, 8))
 	r.sendReport(ridMouse, make([]byte, 5))
@@ -492,25 +537,85 @@ func (r *Relay) inputLoop(dev *InputDev) {
 				LOG.Infof(r.ctx, "input device removed %q", dev.name)
 				delete(r.devices, dev.real)
 				dev.Close()
+				r.resyncKeys() // whatever it held will never be released
 			}
 			r.mu.Unlock()
 			return
 		}
 		r.mu.Lock()
-		for _, ev := range events {
-			if dev.forward || (ev.Type == evKey && ev.Code == r.toggleCode) {
-				r.handleEvent(ev)
-			}
-		}
+		r.handleEvents(dev, events)
 		r.mu.Unlock()
 	}
 }
 
+// handleEvents processes one batch read from dev; caller holds r.mu.
+func (r *Relay) handleEvents(dev *InputDev, events []inputEvent) {
+	for _, ev := range events {
+		switch {
+		case ev.Type == evSyn && ev.Code == synDropped:
+			LOG.Warnf(r.ctx, "input events dropped on %q", dev.name)
+			dev.dropped = true
+		case dev.dropped:
+			if ev.Type == evSyn && ev.Code == synReport {
+				dev.dropped = false
+				r.resyncKeys()
+			}
+		case dev.forward || (ev.Type == evKey && ev.Code == r.toggleCode):
+			r.handleEvent(ev)
+		}
+	}
+}
+
+// readHeldKeys merges the key state of every forwarded device; caller holds r.mu.
+func (r *Relay) readHeldKeys() keyBits {
+	var all keyBits
+	for _, d := range r.devices {
+		if !d.forward {
+			continue
+		}
+		k, err := d.Keys()
+		if err != nil {
+			LOG.Debugf(r.ctx, "read keys of %s: %v", d.name, err)
+			continue
+		}
+		for i := range all {
+			all[i] |= k[i]
+		}
+	}
+	return all
+}
+
+// resyncKeys rebuilds the HID state from the kernel after events went missing; caller holds r.mu.
+func (r *Relay) resyncKeys() {
+	if !r.forwarding {
+		return
+	}
+	held := r.heldKeys()
+	r.resetHIDState()
+	r.sendReport(ridConsumer, make([]byte, 2))
+	for code := range uint16(keyCnt) {
+		if held.held(code) && code != r.toggleCode {
+			r.applyKey(code, true)
+		}
+	}
+	r.kbDirty, r.mouseDirty = true, true
+	r.flush()
+}
+
 // setForwarding switches input between the local desktop and the host; caller holds r.mu.
 func (r *Relay) setForwarding(on bool, notifyHost bool) {
+	wasPending := r.pendingOn
+	r.pendingOn = false
 	if on {
 		if !r.connected() {
 			LOG.Warnf(r.ctx, "not connected to a host, staying local")
+			return
+		}
+		if r.heldKeys() != (keyBits{}) { // once grabbed, the desktop would never see their release
+			r.pendingOn = true
+			if !wasPending {
+				LOG.Infof(r.ctx, "switching once the held keys are released (press %s to cancel)", r.toggleName)
+			}
 			return
 		}
 		for _, d := range r.devices {
@@ -532,6 +637,7 @@ func (r *Relay) setForwarding(on bool, notifyHost bool) {
 			what = "keyboard and mouse"
 		}
 		LOG.Infof(r.ctx, ">>> %s switched to host %s (press %s to switch back)", what, r.peer, r.toggleName)
+		r.sendKeepalive() // wake the link before the first real key press
 		return
 	}
 	for _, d := range r.devices {
@@ -553,9 +659,19 @@ func (r *Relay) resetHIDState() {
 // handleEvent translates one evdev event; caller holds r.mu.
 func (r *Relay) handleEvent(ev inputEvent) {
 	if ev.Type == evKey && ev.Code == r.toggleCode {
-		if ev.Value == 0 { // switch on release so press/release pairs stay on one side
-			r.setForwarding(!r.forwarding, true)
+		if ev.Value != 0 { // switch on release so press/release pairs stay on one side
+			return
 		}
+		if r.pendingOn {
+			r.pendingOn = false
+			LOG.Infof(r.ctx, "switch to host cancelled")
+			return
+		}
+		r.setForwarding(!r.forwarding, true)
+		return
+	}
+	if r.pendingOn && ev.Type == evKey && ev.Value == 0 {
+		r.setForwarding(true, true)
 		return
 	}
 	if !r.forwarding {
@@ -566,45 +682,7 @@ func (r *Relay) handleEvent(ev inputEvent) {
 		if ev.Value == 2 { // autorepeat is generated by the host
 			return
 		}
-		down := ev.Value != 0
-		switch {
-		case ev.Code >= btnLeft && ev.Code <= btnExtra:
-			bit := byte(1) << (ev.Code - btnLeft)
-			if down {
-				r.btns |= bit
-			} else {
-				r.btns &^= bit
-			}
-			r.mouseDirty = true
-		case linuxToConsumer[ev.Code] != 0:
-			var usage uint16
-			if down {
-				usage = linuxToConsumer[ev.Code]
-			}
-			r.sendReport(ridConsumer, []byte{byte(usage), byte(usage >> 8)})
-		case linuxToHID[ev.Code] != 0:
-			u := linuxToHID[ev.Code]
-			switch {
-			case u >= 0xE0 && u <= 0xE7:
-				bit := byte(1) << (u - 0xE0)
-				if down {
-					r.kbMods |= bit
-				} else {
-					r.kbMods &^= bit
-				}
-			case down:
-				if !slices.Contains(r.kbKeys, u) && len(r.kbKeys) < 6 {
-					r.kbKeys = append(r.kbKeys, u)
-				}
-			default:
-				if i := slices.Index(r.kbKeys, u); i >= 0 {
-					r.kbKeys = slices.Delete(r.kbKeys, i, i+1)
-				}
-			}
-			r.kbDirty = true
-		default:
-			LOG.Debugf(r.ctx, "unmapped key code %d", ev.Code)
-		}
+		r.applyKey(ev.Code, ev.Value != 0)
 	case evRel:
 		switch ev.Code {
 		case relX:
@@ -623,6 +701,48 @@ func (r *Relay) handleEvent(ev inputEvent) {
 		if ev.Code == synReport {
 			r.flush()
 		}
+	}
+}
+
+// applyKey updates the HID state for one key or button; consumer keys are sent right away.
+func (r *Relay) applyKey(code uint16, down bool) {
+	switch {
+	case code >= btnLeft && code <= btnExtra:
+		bit := byte(1) << (code - btnLeft)
+		if down {
+			r.btns |= bit
+		} else {
+			r.btns &^= bit
+		}
+		r.mouseDirty = true
+	case linuxToConsumer[code] != 0:
+		var usage uint16
+		if down {
+			usage = linuxToConsumer[code]
+		}
+		r.sendReport(ridConsumer, []byte{byte(usage), byte(usage >> 8)})
+	case linuxToHID[code] != 0:
+		u := linuxToHID[code]
+		switch {
+		case u >= 0xE0 && u <= 0xE7:
+			bit := byte(1) << (u - 0xE0)
+			if down {
+				r.kbMods |= bit
+			} else {
+				r.kbMods &^= bit
+			}
+		case down:
+			if !slices.Contains(r.kbKeys, u) && len(r.kbKeys) < 6 {
+				r.kbKeys = append(r.kbKeys, u)
+			}
+		default:
+			if i := slices.Index(r.kbKeys, u); i >= 0 {
+				r.kbKeys = slices.Delete(r.kbKeys, i, i+1)
+			}
+		}
+		r.kbDirty = true
+	default:
+		LOG.Debugf(r.ctx, "unmapped key code %d", code)
 	}
 }
 

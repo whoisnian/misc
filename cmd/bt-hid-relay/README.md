@@ -33,9 +33,15 @@ while the tool runs, since both would claim `org.bluez`. Pairing keys still end 
 * Reconnection works both ways: the host usually reconnects on its own (`HIDNormallyConnectable`), and the
   tool also dials every paired device (or `-host`) with a 3–30 s backoff (`HIDReconnectInitiate`).
 * A `NoInputNoOutput` agent accepts pairing only while `-pair` is open; afterwards the adapter is
-  connectable but neither discoverable nor pairable.
+  connectable but neither discoverable nor pairable, and the agent rejects requests.
+* A live session is never taken over by another device, and with `-host` every other device is refused.
 * The hotkey acts on key *release* so a press/release pair never gets split across the two machines.
   Input is handed back to the local desktop automatically when the link drops or the tool exits.
+  While a key or button is still held the switch to the host waits for its release, otherwise the local
+  desktop would keep it pressed; press the hotkey again to cancel.
+* While switched to the host the keyboard report is repeated every `-keepalive` (a no-op for the host)
+  so the USB adapter does not autosuspend and the link stays out of sniff mode. Without it the first
+  key presses after an idle moment can get lost.
 
 ## example
 ```sh
@@ -61,6 +67,7 @@ runs as root.
   host through something that mirrors the console instead (Moonlight/Sunshine, Parsec, VNC), or run
   `tscon %SESSIONNAME% /dest:console` from an elevated prompt to move the RDP session back to the console.
 * Pairing is Just Works (no MITM protection); keep the `-pair` window short.
+* With several paired devices, disconnect the current host before connecting another one.
 * Only Classic (BR/EDR) HID in report protocol mode is implemented, no BLE HOGP and no boot protocol,
   so some firmware setup screens may not accept it.
 * Standard 6-key rollover; high-resolution wheel events are ignored; LED state is not echoed back.
@@ -74,14 +81,15 @@ runs as root.
   -config  string   Specify file path of custom configuration json
   -d       bool     Enable debug output [CFG_DEBUG]
   -pair    int      Open a pairing window for N seconds (0 = no limit, -1 = closed) [CFG_PAIR] (default -1)
-  -host    string   Host address to reconnect to (default: every device paired with the adapter) [CFG_HOST]
+  -host    string   Only connect to this host address (default: every device paired with the adapter) [CFG_HOST]
   -adapter string   Bluetooth adapter like hci0 (default: the first one) [CFG_ADAPTER]
   -name    string   Device name shown to the host [CFG_NAME] (default "Linux HID Relay")
   -toggle  string   Key that switches input between local and host: KEY_* name or evdev code [CFG_TOGGLE] (default "KEY_SCROLLLOCK")
   -dev     string   Comma-separated evdev devices to forward (default: /dev/input/by-id/*-event-kbd and *-event-mouse) [CFG_DEV]
-  -only    string   Forward only 'keyboard' or 'mouse' [CFG_ONLY]
+  -only    string   Forward only 'keyboard' or 'mouse' (not with -dev) [CFG_ONLY]
   -test    bool     Send synthetic mouse movement after connecting to verify the link [CFG_TEST]
   -btd     bool     Spawn a private bluetoothd with the input plugin disabled [CFG_BTD] (default true)
+  -keepalive duration   Repeat the keyboard report at this interval while switched to the host (0 = off) [CFG_KEEPALIVE] (default 1s)
 ```
 
 ## prompt history
